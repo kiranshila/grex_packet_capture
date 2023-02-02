@@ -1,7 +1,8 @@
 use anyhow::{bail, Result};
 use core_affinity::CoreId;
 use itertools::Itertools;
-use libc::{c_void, iovec, mmsghdr, msghdr, recvmmsg};
+use libc::{c_void, iovec, mmsghdr, msghdr, recvmmsg, MSG_DONTWAIT};
+use nix::errno::errno;
 use socket2::{Domain, Socket, Type};
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -27,8 +28,7 @@ impl BulkUdpCapture {
         sock.bind(&addr.into())?;
         // Make the recieve buffer huge
         sock.set_recv_buffer_size(RMEM_MAX)?;
-        // Set nonblocking
-        sock.set_nonblocking(true);
+        sock.set_nonblocking(true)?;
         // Create the arrays on the heap to point the NIC to
         let mut buffers = vec![vec![0u8; packet_size]; packets_per_capture];
         // And connect up the scatter-gather buffers
@@ -68,11 +68,12 @@ impl BulkUdpCapture {
                 self.sock.as_raw_fd(),
                 self.msgs.as_mut_ptr(),
                 self.buffers.len().try_into().unwrap(),
-                0,
+                MSG_DONTWAIT,
                 null_mut(),
             )
         };
         if captured == -1 {
+            println!("{}", errno());
             bail!("Bad capture");
         }
         if captured as usize != self.buffers.len() {
