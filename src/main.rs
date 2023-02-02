@@ -1,8 +1,8 @@
 use anyhow::{bail, Result};
 use core_affinity::CoreId;
 use itertools::Itertools;
-use libc::{c_void, iovec, mmsghdr, msghdr, recvmmsg, MSG_DONTWAIT, MSG_WAITFORONE};
-use nix::errno::errno;
+use libc::{c_void, iovec, mmsghdr, msghdr, recvmmsg, EAGAIN, MSG_DONTWAIT, MSG_WAITFORONE};
+use nix::errno::{errno, Errno};
 use socket2::{Domain, Socket, Type};
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -63,33 +63,27 @@ impl BulkUdpCapture {
     }
 
     pub fn capture(&mut self) -> Result<&[Vec<u8>]> {
-        let captured = unsafe {
-            recvmmsg(
-                self.sock.as_raw_fd(),
-                self.msgs.as_mut_ptr(),
-                self.buffers.len().try_into().unwrap(),
-                MSG_DONTWAIT,
-                null_mut(),
-            )
-        };
-        let captured = unsafe {
-            recvmmsg(
-                self.sock.as_raw_fd(),
-                self.msgs.as_mut_ptr(),
-                self.buffers.len().try_into().unwrap(),
-                MSG_DONTWAIT,
-                null_mut(),
-            )
-        };
-        if captured == -1 {
-            println!("{}", errno());
-            bail!("Bad capture");
+        loop {
+            let ret = unsafe {
+                recvmmsg(
+                    self.sock.as_raw_fd(),
+                    self.msgs.as_mut_ptr(),
+                    self.buffers.len().try_into().unwrap(),
+                    MSG_DONTWAIT,
+                    null_mut(),
+                )
+            };
+            if ret == self.buffers.len().try_into().unwrap() {
+                break;
+            }
+            if ret == -1 {
+                match Errno::from_i32(errno()) {
+                    Errno::EAGAIN => continue,
+                    _ => bail!("Capture error"),
+                }
+            }
         }
-        if captured as usize != self.buffers.len() {
-            dbg!(captured);
-            bail!("Didn't recieve enough packets");
-        }
-        Ok(&self.buffers[..captured as usize])
+        Ok(&self.buffers)
     }
 }
 
