@@ -28,7 +28,6 @@ impl BulkUdpCapture {
         sock.bind(&addr.into())?;
         // Make the recieve buffer huge
         sock.set_recv_buffer_size(RMEM_MAX)?;
-        sock.set_nonblocking(true)?;
         // Create the arrays on the heap to point the NIC to
         let mut buffers = vec![vec![0u8; packet_size]; packets_per_capture];
         // And connect up the scatter-gather buffers
@@ -63,25 +62,20 @@ impl BulkUdpCapture {
     }
 
     pub fn capture(&mut self) -> Result<&[Vec<u8>]> {
-        loop {
-            let ret = unsafe {
-                recvmmsg(
-                    self.sock.as_raw_fd(),
-                    self.msgs.as_mut_ptr(),
-                    self.buffers.len().try_into().unwrap(),
-                    MSG_DONTWAIT,
-                    null_mut(),
-                )
-            };
-            if ret == self.buffers.len().try_into().unwrap() {
-                break;
-            }
-            if ret == -1 {
-                match Errno::from_i32(errno()) {
-                    Errno::EAGAIN => continue,
-                    _ => bail!("Capture error"),
-                }
-            }
+        let ret = unsafe {
+            recvmmsg(
+                self.sock.as_raw_fd(),
+                self.msgs.as_mut_ptr(),
+                self.buffers.len().try_into().unwrap(),
+                MSG_DONTWAIT,
+                null_mut(),
+            )
+        };
+        if ret != self.buffers.len().try_into().unwrap() {
+            bail!("Not enough packets");
+        }
+        if ret == -1 {
+            bail!("Capture Error {:#?}", Errno::from_i32(errno()));
         }
         Ok(&self.buffers)
     }
@@ -93,7 +87,7 @@ fn main() -> anyhow::Result<()> {
     // Pin core
     core_affinity::set_for_current(CoreId { id: 8 });
     let mut counts = vec![];
-    let mut cap = BulkUdpCapture::new(60000, 8192, 8200)?;
+    let mut cap = BulkUdpCapture::new(60000, 512, 8200)?;
     for _ in 0..ITERS {
         counts.extend(
             cap.capture()?
