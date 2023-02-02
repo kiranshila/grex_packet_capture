@@ -76,11 +76,11 @@ impl BulkUdpCapture {
     }
 }
 
-const ITERS: usize = 1024; // ~4 million packets
+const ITERS: usize = 512; // ~4 million packets
 
 fn main() -> anyhow::Result<()> {
     let mut counts = vec![];
-    let mut cap = BulkUdpCapture::new(60000, 4096, 8200)?;
+    let mut cap = BulkUdpCapture::new(60000, 8192, 8200)?;
     for _ in 0..ITERS {
         let capture = cap.capture()?;
         counts.extend(
