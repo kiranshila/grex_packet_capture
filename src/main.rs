@@ -59,7 +59,7 @@ impl BulkUdpCapture {
         })
     }
 
-    pub fn capture(&mut self) -> Result<&[Vec<u8>]> {
+    pub fn capture(&mut self) -> Result<&mut [Vec<u8>]> {
         let captured = unsafe {
             recvmmsg(
                 self.sock.as_raw_fd(),
@@ -75,7 +75,7 @@ impl BulkUdpCapture {
         if captured as usize != self.buffers.len() {
             bail!("Didn't recieve enough packets");
         }
-        Ok(&self.buffers[..captured as usize])
+        Ok(&mut self.buffers[..captured as usize])
     }
 }
 
@@ -86,7 +86,8 @@ fn main() -> anyhow::Result<()> {
     let mut counts = vec![0u64; ITERS * PACKETS];
     let mut cap = BulkUdpCapture::new(60000, 8192, 8200)?;
     for i in 0..ITERS {
-        for (j, payload) in cap.capture()?.iter().enumerate() {
+        for (j, payload) in cap.capture()?.iter_mut().enumerate() {
+            payload[8200] = 0;
             counts[i * ITERS + j] = u64::from_be_bytes(payload[..8].try_into().unwrap());
         }
     }
