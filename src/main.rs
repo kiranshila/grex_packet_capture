@@ -75,13 +75,20 @@ impl BulkUdpCapture {
     }
 }
 
+const ITERS: usize = 64; // ~4 million packets
+
 fn main() -> anyhow::Result<()> {
+    let mut counts = vec![];
     let mut cap = BulkUdpCapture::new(60000, 4096, 8200)?;
-    let capture = cap.capture()?;
-    let mut counts: Vec<_> = capture
-        .iter()
-        .map(|v| u64::from_be_bytes(v[..8].try_into().unwrap()))
-        .collect();
+    for _ in 0..ITERS {
+        let capture = cap.capture()?;
+        counts.extend(
+            capture
+                .iter()
+                .map(|v| u64::from_be_bytes(v[..8].try_into().unwrap())),
+        );
+    }
+    // And process
     counts.sort();
     let mut deltas: Vec<_> = counts.windows(2).map(|v| v[1] - v[0]).collect();
     deltas.sort();
