@@ -67,7 +67,7 @@ impl BulkUdpCapture {
                 self.sock.as_raw_fd(),
                 self.msgs.as_mut_ptr(),
                 self.buffers.len().try_into().unwrap(),
-                MSG_DONTWAIT,
+                0,
                 null_mut(),
             )
         };
