@@ -108,7 +108,7 @@ impl BulkUdpCapture {
     }
 }
 
-const ITERS: usize = 512; // ~4 million packets
+const ITERS: usize = 32768; // ~4 million packets
 
 fn main() -> anyhow::Result<()> {
     // Pin core
@@ -130,7 +130,7 @@ fn main() -> anyhow::Result<()> {
         dbg!(deltas.iter().dedup_with_count().collect::<Vec<_>>());
     });
 
-    let mut cap = BulkUdpCapture::new(60000, 16384, 8200)?;
+    let mut cap = BulkUdpCapture::new(60000, 256, 8200)?;
     cap.clear()?;
 
     for _ in 0..ITERS {
