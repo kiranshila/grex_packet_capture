@@ -1,4 +1,5 @@
 use anyhow::{bail, Result};
+use core_affinity::CoreId;
 use itertools::Itertools;
 use libc::{c_void, iovec, mmsghdr, msghdr, recvmmsg};
 use socket2::{Domain, Socket, Type};
@@ -82,6 +83,8 @@ impl BulkUdpCapture {
 const ITERS: usize = 64; // ~4 million packets
 
 fn main() -> anyhow::Result<()> {
+    // Pin core
+    core_affinity::set_for_current(CoreId { id: 8 });
     let mut counts = vec![];
     let mut cap = BulkUdpCapture::new(60000, 8192, 8200)?;
     for _ in 0..ITERS {
