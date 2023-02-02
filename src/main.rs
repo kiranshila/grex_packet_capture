@@ -1,5 +1,6 @@
 use anyhow::{bail, Result};
 use core_affinity::CoreId;
+use crossbeam::channel::bounded;
 use itertools::Itertools;
 use libc::{
     c_void, iovec, mmsghdr, msghdr, recvfrom, recvmmsg, EAGAIN, MSG_DONTWAIT, MSG_WAITFORONE,
@@ -112,21 +113,34 @@ const ITERS: usize = 16384; // ~4 million packets
 fn main() -> anyhow::Result<()> {
     // Pin core
     core_affinity::set_for_current(CoreId { id: 8 });
-    let mut counts = vec![];
+
+    let (s, r) = bounded(100);
+
+    let handle = std::thread::spawn(move || {
+        core_affinity::set_for_current(CoreId { id: 8 });
+        let mut counts = vec![];
+        while let Ok(v) = r.recv() {
+            counts.push(v);
+        }
+        // And process
+        println!("Captured {} packets!", counts.len());
+        counts.sort();
+        let mut deltas: Vec<_> = counts.windows(2).map(|v| v[1] - v[0]).collect();
+        deltas.sort();
+        dbg!(deltas.iter().dedup_with_count().collect::<Vec<_>>());
+    });
+
     let mut cap = BulkUdpCapture::new(60000, 512, 8200)?;
     cap.clear()?;
+
     for _ in 0..ITERS {
-        counts.extend(
-            cap.capture()?
-                .iter()
-                .map(|v| u64::from_be_bytes(v[..8].try_into().unwrap())),
-        )
+        for bytes in cap.capture()? {
+            s.send(u64::from_be_bytes(bytes[..8].try_into().unwrap()))
+                .unwrap();
+        }
     }
-    // And process
-    println!("Captured {} packets!", counts.len());
-    counts.sort();
-    let mut deltas: Vec<_> = counts.windows(2).map(|v| v[1] - v[0]).collect();
-    deltas.sort();
-    dbg!(deltas.iter().dedup_with_count().collect::<Vec<_>>());
+    drop(s);
+
+    handle.join().unwrap();
     Ok(())
 }
