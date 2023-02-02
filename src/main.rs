@@ -1,7 +1,7 @@
 use anyhow::{bail, Result};
 use core_affinity::CoreId;
 use itertools::Itertools;
-use libc::{c_void, iovec, mmsghdr, msghdr, recvmmsg, MSG_DONTWAIT};
+use libc::{c_void, iovec, mmsghdr, msghdr, recvmmsg, MSG_DONTWAIT, MSG_WAITFORONE};
 use nix::errno::errno;
 use socket2::{Domain, Socket, Type};
 use std::{
@@ -68,7 +68,7 @@ impl BulkUdpCapture {
                 self.sock.as_raw_fd(),
                 self.msgs.as_mut_ptr(),
                 self.buffers.len().try_into().unwrap(),
-                MSG_DONTWAIT,
+                MSG_WAITFORONE,
                 null_mut(),
             )
         };
