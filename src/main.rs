@@ -72,6 +72,9 @@ impl BulkUdpCapture {
         if captured == -1 {
             bail!("Bad capture");
         }
+        if captured as usize != self.buffers.len() {
+            bail!("Didn't recieve enough packets");
+        }
         Ok(&self.buffers[..captured as usize])
     }
 }
@@ -83,8 +86,7 @@ fn main() -> anyhow::Result<()> {
     let mut counts = vec![0u64; ITERS * PACKETS];
     let mut cap = BulkUdpCapture::new(60000, 8192, 8200)?;
     for i in 0..ITERS {
-        let capture = cap.capture()?;
-        for (j, payload) in capture.iter().enumerate() {
+        for (j, payload) in cap.capture()?.iter().enumerate() {
             counts[i * ITERS + j] = u64::from_be_bytes(payload[..8].try_into().unwrap());
         }
     }
