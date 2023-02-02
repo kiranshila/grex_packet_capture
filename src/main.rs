@@ -27,7 +27,7 @@ impl BulkUdpCapture {
         // Make the recieve buffer huge
         sock.set_recv_buffer_size(RMEM_MAX)?;
         // Create the arrays on the heap to point the NIC to
-        let mut buffers = vec![vec![0u8; packet_size + 1]; packets_per_capture];
+        let mut buffers = vec![vec![0u8; packet_size]; packets_per_capture];
         // And connect up the scatter-gather buffers
         let mut iovecs: Vec<_> = buffers
             .iter_mut()
@@ -59,7 +59,7 @@ impl BulkUdpCapture {
         })
     }
 
-    pub fn capture(&mut self) -> Result<&mut [Vec<u8>]> {
+    pub fn capture(&mut self) -> Result<&[Vec<u8>]> {
         let captured = unsafe {
             recvmmsg(
                 self.sock.as_raw_fd(),
@@ -75,21 +75,21 @@ impl BulkUdpCapture {
         if captured as usize != self.buffers.len() {
             bail!("Didn't recieve enough packets");
         }
-        Ok(&mut self.buffers[..captured as usize])
+        Ok(&self.buffers[..captured as usize])
     }
 }
 
 const ITERS: usize = 1024; // ~4 million packets
-const PACKETS: usize = 4096;
 
 fn main() -> anyhow::Result<()> {
     let mut counts = vec![];
     let mut cap = BulkUdpCapture::new(60000, 8192, 8200)?;
     for _ in 0..ITERS {
-        for payload in cap.capture()?.iter_mut() {
-            payload[8200] = 0;
-            counts.push(u64::from_be_bytes(payload[..8].try_into().unwrap()));
-        }
+        counts.extend(
+            cap.capture()?
+                .iter()
+                .map(|v| u64::from_be_bytes(v[..8].try_into().unwrap())),
+        )
     }
     // And process
     println!("Captured {} packets!", counts.len());
