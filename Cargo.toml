@@ -1,0 +1,10 @@
+[package]
+name = "grex_packet_capture"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.68"
+libc = "0.2"
+nix = "0.26.2"
+socket2 = "0.4.7"
