@@ -83,12 +83,12 @@ const ITERS: usize = 1024; // ~4 million packets
 const PACKETS: usize = 4096;
 
 fn main() -> anyhow::Result<()> {
-    let mut counts = vec![0u64; ITERS * PACKETS];
+    let mut counts = vec![];
     let mut cap = BulkUdpCapture::new(60000, 8192, 8200)?;
-    for i in 0..ITERS {
-        for (j, payload) in cap.capture()?.iter_mut().enumerate() {
+    for _ in 0..ITERS {
+        for payload in cap.capture()?.iter_mut() {
             payload[8200] = 0;
-            counts[i * ITERS + j] = u64::from_be_bytes(payload[..8].try_into().unwrap());
+            counts.push(u64::from_be_bytes(payload[..8].try_into().unwrap()));
         }
     }
     // And process
