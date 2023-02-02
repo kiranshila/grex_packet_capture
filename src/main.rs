@@ -76,6 +76,7 @@ impl BulkUdpCapture {
             bail!("Bad capture");
         }
         if captured as usize != self.buffers.len() {
+            dbg!(captured);
             bail!("Didn't recieve enough packets");
         }
         Ok(&self.buffers[..captured as usize])
