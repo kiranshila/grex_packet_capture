@@ -1,4 +1,5 @@
 use anyhow::{bail, Result};
+use itertools::Itertools;
 use libc::{c_void, iovec, mmsghdr, msghdr, recvmmsg};
 use socket2::{Domain, Socket, Type};
 use std::{
@@ -89,9 +90,10 @@ fn main() -> anyhow::Result<()> {
         );
     }
     // And process
+    println!("Captured {} packets!", counts.len());
     counts.sort();
     let mut deltas: Vec<_> = counts.windows(2).map(|v| v[1] - v[0]).collect();
     deltas.sort();
-    dbg!(deltas);
+    dbg!(deltas.iter().dedup_with_count().collect::<Vec<_>>());
     Ok(())
 }
