@@ -68,7 +68,16 @@ impl BulkUdpCapture {
                 self.sock.as_raw_fd(),
                 self.msgs.as_mut_ptr(),
                 self.buffers.len().try_into().unwrap(),
-                MSG_WAITFORONE,
+                MSG_DONTWAIT,
+                null_mut(),
+            )
+        };
+        let captured = unsafe {
+            recvmmsg(
+                self.sock.as_raw_fd(),
+                self.msgs.as_mut_ptr(),
+                self.buffers.len().try_into().unwrap(),
+                MSG_DONTWAIT,
                 null_mut(),
             )
         };
