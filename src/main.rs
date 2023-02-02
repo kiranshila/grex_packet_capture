@@ -1,7 +1,9 @@
 use anyhow::{bail, Result};
 use core_affinity::CoreId;
 use itertools::Itertools;
-use libc::{c_void, iovec, mmsghdr, msghdr, recvmmsg, EAGAIN, MSG_DONTWAIT, MSG_WAITFORONE};
+use libc::{
+    c_void, iovec, mmsghdr, msghdr, recvfrom, recvmmsg, EAGAIN, MSG_DONTWAIT, MSG_WAITFORONE,
+};
 use nix::errno::{errno, Errno};
 use socket2::{Domain, Socket, Type};
 use std::{
@@ -79,6 +81,30 @@ impl BulkUdpCapture {
         }
         Ok(&self.buffers)
     }
+
+    //  clear the recieve buffers
+    pub fn clear(&mut self) -> Result<()> {
+        let size = self.buffers[0].len();
+        let mut buf = vec![0u8; size];
+        loop {
+            let ret = unsafe {
+                recvfrom(
+                    self.sock.as_raw_fd(),
+                    buf.as_mut_ptr() as *mut c_void,
+                    size,
+                    MSG_DONTWAIT,
+                    null_mut(),
+                    null_mut(),
+                )
+            };
+            if ret == -1 {
+                match Errno::from_i32(errno()) {
+                    Errno::EAGAIN => return Ok(()),
+                    _ => bail!("Socket error: {:#?}", Errno::from_i32(errno())),
+                }
+            }
+        }
+    }
 }
 
 const ITERS: usize = 16384; // ~4 million packets
@@ -88,6 +114,7 @@ fn main() -> anyhow::Result<()> {
     core_affinity::set_for_current(CoreId { id: 8 });
     let mut counts = vec![];
     let mut cap = BulkUdpCapture::new(60000, 512, 8200)?;
+    cap.clear()?;
     for _ in 0..ITERS {
         counts.extend(
             cap.capture()?
