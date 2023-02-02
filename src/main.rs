@@ -80,7 +80,7 @@ impl BulkUdpCapture {
     }
 }
 
-const ITERS: usize = 64; // ~4 million packets
+const ITERS: usize = 128; // ~4 million packets
 
 fn main() -> anyhow::Result<()> {
     // Pin core
