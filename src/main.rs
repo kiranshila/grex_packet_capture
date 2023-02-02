@@ -27,6 +27,8 @@ impl BulkUdpCapture {
         sock.bind(&addr.into())?;
         // Make the recieve buffer huge
         sock.set_recv_buffer_size(RMEM_MAX)?;
+        // Set nonblocking
+        sock.set_nonblocking(true);
         // Create the arrays on the heap to point the NIC to
         let mut buffers = vec![vec![0u8; packet_size]; packets_per_capture];
         // And connect up the scatter-gather buffers
