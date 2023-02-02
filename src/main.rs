@@ -119,8 +119,8 @@ fn main() -> anyhow::Result<()> {
     let handle = std::thread::spawn(move || {
         core_affinity::set_for_current(CoreId { id: 8 });
         let mut counts = vec![];
-        while let Ok(v) = r.recv() {
-            counts.push(v);
+        while let Ok(mut v) = r.recv() {
+            counts.append(&mut v);
         }
         // And process
         println!("Captured {} packets!", counts.len());
@@ -134,10 +134,12 @@ fn main() -> anyhow::Result<()> {
     cap.clear()?;
 
     for _ in 0..ITERS {
-        for bytes in cap.capture()? {
-            s.send(u64::from_be_bytes(bytes[..8].try_into().unwrap()))
-                .unwrap();
-        }
+        let v: Vec<_> = cap
+            .capture()?
+            .iter()
+            .map(|v| u64::from_be_bytes(v[..8].try_into().unwrap()))
+            .collect();
+        s.send(v).unwrap();
     }
     drop(s);
 
