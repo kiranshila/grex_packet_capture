@@ -79,7 +79,7 @@ impl BulkUdpCapture {
     }
 }
 
-const ITERS: usize = 1024; // ~4 million packets
+const ITERS: usize = 64; // ~4 million packets
 
 fn main() -> anyhow::Result<()> {
     let mut counts = vec![];
