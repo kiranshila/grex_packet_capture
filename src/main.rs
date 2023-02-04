@@ -94,7 +94,7 @@ impl ReorderBuffer {
         // Grab the next free index
         let idx = match self.free_idxs.pop_front() {
             Some(idx) => idx,
-            None => bail!("Buffer filled up!"),
+            None => bail!("Reorder buffer filled up, this shouldn't happen"),
         };
 
         // Associate its count
