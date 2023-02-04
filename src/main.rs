@@ -4,11 +4,12 @@ use libc::EAGAIN;
 use socket2::{Domain, Socket, Type};
 use std::{
     collections::{HashMap, VecDeque},
-    hint,
+    hint::{self, spin_loop},
     mem::MaybeUninit,
     net::SocketAddr,
+    sync::Arc,
 };
-use thingbuf::mpsc::blocking;
+use thingbuf::ThingBuf;
 
 const UDP_PAYLOAD: usize = 8200;
 const WARMUP_PACKETS: usize = 1_000_000;
@@ -62,7 +63,7 @@ fn capture(sock: &Socket, packet_buffer: &mut [MaybeUninit<u8>]) -> anyhow::Resu
 
 type Count = u64;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 struct Payload([u8; UDP_PAYLOAD]);
 
 impl Payload {
@@ -113,7 +114,16 @@ impl ReorderBuffer {
         self.free_idxs.push_back(idx);
         // Return the data
         // Safety: These indicies are correct by construction
-        Some(unsafe { self.buffer.get_unchecked(idx) }.clone())
+        Some(*unsafe { self.buffer.get_unchecked(idx) })
+    }
+}
+
+#[derive(Clone)]
+pub struct PayloadBlock([Payload; BLOCK_PAYLOADS]);
+
+impl Default for PayloadBlock {
+    fn default() -> Self {
+        Self([Payload::default(); BLOCK_PAYLOADS])
     }
 }
 
@@ -138,11 +148,12 @@ fn main() -> anyhow::Result<()> {
     // Create some state
     let mut buffer = [MaybeUninit::zeroed(); UDP_PAYLOAD];
     let mut rb = ReorderBuffer::new(BACKLOG_BUFFER_PAYLOADS);
-    let mut block_buffer = vec![Payload::default(); BLOCK_PAYLOADS];
     let mut to_fill = vec![true; BLOCK_PAYLOADS];
 
     // Create the channel to bench the copies
-    let (s, r) = blocking::channel(10);
+    let source_buf: Arc<ThingBuf<PayloadBlock>> = Arc::new(ThingBuf::new(4));
+
+    let sink_buf = source_buf.clone();
 
     // Spawn a thread to "sink" the payloads
     let handle = std::thread::spawn(move || {
@@ -151,7 +162,7 @@ fn main() -> anyhow::Result<()> {
             panic!("Couldn't set core affinity");
         }
         loop {
-            r.recv().unwrap();
+            sink_buf.pop();
         }
     });
 
@@ -170,7 +181,17 @@ fn main() -> anyhow::Result<()> {
 
     // Sort N blocks, printing dropped packets
     for _ in 0..BLOCKS_TO_SORT {
-        for _ in 0..block_buffer.len() {
+        // First block to grab a reference to the next slot in the queue
+        let mut slot = loop {
+            match source_buf.push_ref() {
+                Ok(slot) => {
+                    break slot;
+                }
+                Err(_) => spin_loop(),
+            }
+        };
+
+        for _ in 0..slot.0.len() {
             // ----- CAPTURE
 
             // Capture an arbitrary payload
@@ -190,7 +211,7 @@ fn main() -> anyhow::Result<()> {
             if count < oldest_count {
                 // Drop this payload, it happened in the past
                 drops += 1;
-            } else if count >= oldest_count + block_buffer.len() as u64 {
+            } else if count >= oldest_count + slot.0.len() as u64 {
                 // Packet is destined for the future, insert into reorder buf
                 // If the buffer fills up, panic. This shouldn't happen.
                 rb.insert(pl).unwrap();
@@ -199,7 +220,7 @@ fn main() -> anyhow::Result<()> {
                 // Remove this idx from the `to_fill` entry
                 to_fill[idx] = false;
                 // Packet is for this block! Insert into it's position
-                block_buffer[idx] = pl;
+                slot.0[idx] = pl;
                 processed += 1;
             }
         }
@@ -208,19 +229,18 @@ fn main() -> anyhow::Result<()> {
         for (idx, _) in to_fill.into_iter().enumerate().filter(|(_, fill)| *fill) {
             let count = idx as u64 + oldest_count;
             if let Some(pl) = rb.remove(&count) {
-                block_buffer[idx] = pl;
+                slot.0[idx] = pl;
                 processed += 1;
             } else {
-                block_buffer[idx] = Payload::default();
+                slot.0[idx] = Payload::default();
                 drops += 1;
             }
         }
         // Then reset to_fill
         to_fill = vec![true; BLOCK_PAYLOADS];
         // Move the oldest count forward by the block size
-        oldest_count += block_buffer.len() as u64;
-        // At this point, we'd send the "sorted" block to the next stage
-        s.send(block_buffer.clone()).unwrap();
+        oldest_count += slot.0.len() as u64;
+        // At this point, we'd send the "sorted" block to the next stage by dropping slot
     }
 
     // Join the sink
