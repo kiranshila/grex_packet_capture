@@ -172,8 +172,13 @@ fn main() -> anyhow::Result<()> {
         if !core_affinity::set_for_current(CoreId { id: 9 }) {
             panic!("Couldn't set core affinity");
         }
+        let mut count = 0;
         loop {
             sink_buf.pop();
+            count += 1;
+            if count == BLOCKS_TO_SORT {
+                break;
+            }
         }
     });
 
@@ -254,6 +259,8 @@ fn main() -> anyhow::Result<()> {
         oldest_count += slot.0.len() as u64;
         // At this point, we'd send the "sorted" block to the next stage by dropping slot
     }
+
+    // Drop
 
     // Join the sink
     handle.join().unwrap();
