@@ -263,8 +263,6 @@ fn main() -> anyhow::Result<()> {
         // At this point, we'd send the "sorted" block to the next stage by dropping slot
     }
 
-    // Drop
-
     // Join the sink
     handle.join().unwrap();
 
