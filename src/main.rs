@@ -138,6 +138,7 @@ fn main() -> anyhow::Result<()> {
     let mut buffer = [MaybeUninit::zeroed(); UDP_PAYLOAD];
     let mut rb = ReorderBuffer::new(BACKLOG_BUFFER_PAYLOADS);
     let mut block_buffer = vec![Payload::default(); BLOCK_PAYLOADS];
+    let mut to_fill = vec![true; BLOCK_PAYLOADS];
 
     // Clear buffered packets
     clear_buffered_packets(&socket, &mut buffer)?;
@@ -169,7 +170,6 @@ fn main() -> anyhow::Result<()> {
             }
 
             // ----- SORT
-            let mut to_fill: HashSet<_> = (0..block_buffer.len()).collect();
 
             // Find its position in this block
             if count < oldest_count {
@@ -182,28 +182,29 @@ fn main() -> anyhow::Result<()> {
             } else {
                 let idx = (count - oldest_count) as usize;
                 // Remove this idx from the `to_fill` entry
-                to_fill.remove(&idx);
+                to_fill[idx] = false;
                 // Packet is for this block! Insert into it's position
                 block_buffer[idx] = pl;
                 processed += 1;
             }
-
-            // Now we'll fill in gaps with past data, if we have it
-            // Otherwise replace with zeros and increment the drop count
-            for idx in to_fill {
-                let count = idx as u64 + oldest_count;
-                if let Some(pl) = rb.remove(&count) {
-                    block_buffer[idx] = pl;
-                    processed += 1;
-                } else {
-                    block_buffer[idx] = Payload::default();
-                    drops += 1;
-                }
+        }
+        // Now we'll fill in gaps with past data, if we have it
+        // Otherwise replace with zeros and increment the drop count
+        for (idx, _) in to_fill.into_iter().enumerate().filter(|(_, fill)| *fill) {
+            let count = idx as u64 + oldest_count;
+            if let Some(pl) = rb.remove(&count) {
+                block_buffer[idx] = pl;
+                processed += 1;
+            } else {
+                block_buffer[idx] = Payload::default();
+                drops += 1;
             }
         }
-        // At this point, we'd send the "sorted" block to the next stage
+        // Then reset to_fill
+        to_fill = vec![true; BLOCK_PAYLOADS];
         // Move the oldest count forward by the block size
         oldest_count += block_buffer.len() as u64;
+        // At this point, we'd send the "sorted" block to the next stage
     }
 
     println!("Dropped {drops} packets while processing {processed} packets.");
