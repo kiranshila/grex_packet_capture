@@ -62,7 +62,7 @@ fn capture(sock: &Socket, packet_buffer: &mut [MaybeUninit<u8>]) -> anyhow::Resu
 
 type Count = u64;
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 struct Payload([u8; UDP_PAYLOAD]);
 
 impl Payload {
@@ -113,7 +113,7 @@ impl ReorderBuffer {
         self.free_idxs.push_back(idx);
         // Return the data
         // Safety: These indicies are correct by construction
-        Some(*unsafe { self.buffer.get_unchecked(idx) })
+        Some(unsafe { self.buffer.get_unchecked(idx) }.clone())
     }
 }
 
