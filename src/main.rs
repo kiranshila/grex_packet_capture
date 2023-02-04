@@ -4,6 +4,7 @@ use libc::EAGAIN;
 use socket2::{Domain, Socket, Type};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
+    hint,
     mem::MaybeUninit,
     net::SocketAddr,
 };
@@ -13,7 +14,7 @@ const WARMUP_PACKETS: usize = 1_000_000;
 const BACKLOG_BUFFER_PAYLOADS: usize = 1024;
 const BLOCK_PAYLOADS: usize = 32_768;
 
-const BLOCKS_TO_SORT: usize = 10;
+const BLOCKS_TO_SORT: usize = 2;
 
 fn clear_buffered_packets(
     sock: &Socket,
@@ -53,6 +54,7 @@ fn capture(sock: &Socket, packet_buffer: &mut [MaybeUninit<u8>]) -> anyhow::Resu
                 }
             }
         }
+        hint::spin_loop();
     }
     Ok(())
 }
