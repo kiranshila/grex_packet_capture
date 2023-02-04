@@ -9,7 +9,7 @@ use std::{
     net::SocketAddr,
     sync::Arc,
 };
-use thingbuf::ThingBuf;
+use thingbuf::{Recycle, ThingBuf};
 
 const UDP_PAYLOAD: usize = 8200;
 const WARMUP_PACKETS: usize = 1_000_000;
@@ -120,9 +120,21 @@ impl ReorderBuffer {
 #[derive(Clone)]
 pub struct PayloadBlock([MaybeUninit<Payload>; BLOCK_PAYLOADS]);
 
-impl Default for PayloadBlock {
-    fn default() -> Self {
-        Self([MaybeUninit::uninit(); BLOCK_PAYLOADS])
+pub struct PayloadRecycle;
+
+impl PayloadRecycle {
+    pub const fn new() -> Self {
+        Self
+    }
+}
+
+impl Recycle<PayloadBlock> for PayloadRecycle {
+    fn new_element(&self) -> PayloadBlock {
+        PayloadBlock([MaybeUninit::uninit(); BLOCK_PAYLOADS])
+    }
+
+    fn recycle(&self, _: &mut PayloadBlock) {
+        // Do nothing, we have to be careful about uninit
     }
 }
 
@@ -150,7 +162,7 @@ fn main() -> anyhow::Result<()> {
     let mut to_fill = vec![true; BLOCK_PAYLOADS];
 
     // Create the channel to bench the copies
-    let source_buf: Arc<ThingBuf<PayloadBlock>> = Arc::new(ThingBuf::new(4));
+    let source_buf = Arc::new(ThingBuf::with_recycle(4, PayloadRecycle::new()));
 
     let sink_buf = source_buf.clone();
 
