@@ -239,8 +239,7 @@ fn main() -> anyhow::Result<()> {
                 // Remove this idx from the `to_fill` entry
                 to_fill[idx] = false;
                 // Packet is for this block! Insert into it's position
-                // Safety: We're making this init with assignment
-                *unsafe { slot.0[idx].assume_init_mut() } = pl;
+                slot.0[idx].write(pl);
                 processed += 1;
             }
         }
@@ -249,10 +248,10 @@ fn main() -> anyhow::Result<()> {
         for (idx, _) in to_fill.into_iter().enumerate().filter(|(_, fill)| *fill) {
             let count = idx as u64 + oldest_count;
             if let Some(pl) = rb.remove(&count) {
-                *unsafe { slot.0[idx].assume_init_mut() } = pl;
+                slot.0[idx].write(pl);
                 processed += 1;
             } else {
-                *unsafe { slot.0[idx].assume_init_mut() } = Payload::default();
+                slot.0[idx].write(Payload::default());
                 drops += 1;
             }
         }
