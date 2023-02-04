@@ -174,9 +174,14 @@ fn main() -> anyhow::Result<()> {
         }
         let mut count = 0;
         loop {
-            sink_buf.pop();
-            count += 1;
-            println!("{count}");
+            if sink_buf.pop().is_some() {
+                count += 1;
+                if count == BLOCKS_TO_SORT {
+                    break;
+                }
+            } else {
+                spin_loop();
+            }
         }
     });
 
