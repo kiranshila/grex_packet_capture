@@ -118,11 +118,11 @@ impl ReorderBuffer {
 }
 
 #[derive(Clone)]
-pub struct PayloadBlock([Payload; BLOCK_PAYLOADS]);
+pub struct PayloadBlock([MaybeUninit<Payload>; BLOCK_PAYLOADS]);
 
 impl Default for PayloadBlock {
     fn default() -> Self {
-        Self([Payload::default(); BLOCK_PAYLOADS])
+        Self([MaybeUninit::uninit(); BLOCK_PAYLOADS])
     }
 }
 
@@ -219,7 +219,8 @@ fn main() -> anyhow::Result<()> {
                 // Remove this idx from the `to_fill` entry
                 to_fill[idx] = false;
                 // Packet is for this block! Insert into it's position
-                slot.0[idx] = pl;
+                // Safety: We're making this init with assignment
+                *unsafe { slot.0[idx].assume_init_mut() } = pl;
                 processed += 1;
             }
         }
@@ -228,10 +229,10 @@ fn main() -> anyhow::Result<()> {
         for (idx, _) in to_fill.into_iter().enumerate().filter(|(_, fill)| *fill) {
             let count = idx as u64 + oldest_count;
             if let Some(pl) = rb.remove(&count) {
-                slot.0[idx] = pl;
+                *unsafe { slot.0[idx].assume_init_mut() } = pl;
                 processed += 1;
             } else {
-                slot.0[idx] = Payload::default();
+                *unsafe { slot.0[idx].assume_init_mut() } = Payload::default();
                 drops += 1;
             }
         }
