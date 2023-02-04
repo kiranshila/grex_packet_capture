@@ -1,148 +1,213 @@
-use anyhow::{bail, Result};
+use anyhow::bail;
 use core_affinity::CoreId;
-use crossbeam::channel::bounded;
-use itertools::Itertools;
-use libc::{
-    c_void, iovec, mmsghdr, msghdr, recvfrom, recvmmsg, EAGAIN, MSG_DONTWAIT, MSG_WAITFORONE,
-};
-use nix::errno::{errno, Errno};
+use libc::EAGAIN;
 use socket2::{Domain, Socket, Type};
 use std::{
-    net::{IpAddr, Ipv4Addr, SocketAddr},
-    os::unix::prelude::AsRawFd,
-    ptr::null_mut,
+    collections::{HashMap, HashSet, VecDeque},
+    mem::MaybeUninit,
+    net::SocketAddr,
 };
 
-const RMEM_MAX: usize = 2097152;
+const UDP_PAYLOAD: usize = 8200;
+const WARMUP_PACKETS: usize = 1_000_000;
+const BACKLOG_BUFFER_PAYLOADS: usize = 1024;
+const BLOCK_PAYLOADS: usize = 32_768;
 
-struct BulkUdpCapture {
-    sock: Socket,
-    msgs: Vec<mmsghdr>,
-    buffers: Vec<Vec<u8>>,
-    _iovecs: Vec<iovec>,
+const BLOCKS_TO_SORT: usize = 10;
+
+fn clear_buffered_packets(
+    sock: &Socket,
+    packet_buffer: &mut [MaybeUninit<u8>],
+) -> anyhow::Result<usize> {
+    let mut bytes_cleared = 0;
+    loop {
+        match sock.recv_from(packet_buffer) {
+            Ok((size, _)) => bytes_cleared += size,
+            Err(e) => {
+                if let Some(os) = e.raw_os_error() {
+                    if os != EAGAIN {
+                        return Err(e.into());
+                    }
+                }
+                break;
+            }
+        }
+    }
+    Ok(bytes_cleared)
 }
 
-impl BulkUdpCapture {
-    pub fn new(port: u16, packets_per_capture: usize, packet_size: usize) -> Result<Self> {
-        // Create the bog-standard UDP socket
-        let sock = Socket::new(Domain::IPV4, Type::DGRAM, None)?;
-        // Create its local address and bind
-        let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), port);
-        sock.bind(&addr.into())?;
-        // Make the recieve buffer huge
-        sock.set_recv_buffer_size(RMEM_MAX)?;
-        // Create the arrays on the heap to point the NIC to
-        let mut buffers = vec![vec![0u8; packet_size]; packets_per_capture];
-        // And connect up the scatter-gather buffers
-        let mut iovecs: Vec<_> = buffers
-            .iter_mut()
-            .map(|ptr| iovec {
-                iov_base: ptr.as_mut_ptr() as *mut c_void,
-                iov_len: packet_size,
-            })
-            .collect();
-        let msgs: Vec<_> = iovecs
-            .iter_mut()
-            .map(|ptr| mmsghdr {
-                msg_hdr: msghdr {
-                    msg_name: null_mut(),
-                    msg_namelen: 0,
-                    msg_iov: ptr as *mut iovec,
-                    msg_iovlen: 1,
-                    msg_control: null_mut(),
-                    msg_controllen: 0,
-                    msg_flags: 0,
-                },
-                msg_len: 0,
-            })
-            .collect();
-        Ok(Self {
-            sock,
-            msgs,
-            buffers,
-            _iovecs: iovecs,
-        })
-    }
-
-    pub fn capture(&mut self) -> Result<&[Vec<u8>]> {
-        let ret = unsafe {
-            recvmmsg(
-                self.sock.as_raw_fd(),
-                self.msgs.as_mut_ptr(),
-                self.buffers.len().try_into().unwrap(),
-                0,
-                null_mut(),
-            )
-        };
-        if ret != self.buffers.len().try_into().unwrap() {
-            bail!("Not enough packets");
-        }
-        if ret == -1 {
-            bail!("Capture Error {:#?}", Errno::from_i32(errno()));
-        }
-        Ok(&self.buffers)
-    }
-
-    //  clear the recieve buffers
-    pub fn clear(&mut self) -> Result<()> {
-        let size = self.buffers[0].len();
-        let mut buf = vec![0u8; size];
-        loop {
-            let ret = unsafe {
-                recvfrom(
-                    self.sock.as_raw_fd(),
-                    buf.as_mut_ptr() as *mut c_void,
-                    size,
-                    MSG_DONTWAIT,
-                    null_mut(),
-                    null_mut(),
-                )
-            };
-            if ret == -1 {
-                match Errno::from_i32(errno()) {
-                    Errno::EAGAIN => return Ok(()),
-                    _ => bail!("Socket error: {:#?}", Errno::from_i32(errno())),
+fn capture(sock: &Socket, packet_buffer: &mut [MaybeUninit<u8>]) -> anyhow::Result<()> {
+    loop {
+        match sock.recv_from(packet_buffer) {
+            Ok((size, _)) => {
+                if size == UDP_PAYLOAD {
+                    // Buffer now contains valid data
+                    break;
+                }
+            }
+            Err(e) => {
+                if let Some(os) = e.raw_os_error() {
+                    if os != EAGAIN {
+                        return Err(e.into());
+                    }
                 }
             }
         }
     }
+    Ok(())
 }
 
-const ITERS: usize = 262144; // ~134 million packets
+type Count = u64;
+
+#[derive(Debug, Copy, Clone)]
+struct Payload([u8; UDP_PAYLOAD]);
+
+impl Payload {
+    fn count(&self) -> Count {
+        u64::from_be_bytes(self.0[0..8].try_into().unwrap())
+    }
+}
+
+impl Default for Payload {
+    fn default() -> Self {
+        Self([0u8; UDP_PAYLOAD])
+    }
+}
+
+struct ReorderBuffer {
+    backlog_idxs: HashMap<Count, usize>,
+    buffer: Vec<Payload>,
+    free_idxs: VecDeque<usize>,
+}
+
+impl ReorderBuffer {
+    fn new(size: usize) -> Self {
+        Self {
+            backlog_idxs: HashMap::new(),
+            buffer: vec![Payload::default(); size],
+            free_idxs: (0..size).collect(),
+        }
+    }
+    fn insert(&mut self, payload: Payload) -> anyhow::Result<()> {
+        // Grab the next free index
+        let idx = match self.free_idxs.pop_front() {
+            Some(idx) => idx,
+            None => bail!("Buffer filled up!"),
+        };
+
+        // Associate its count
+        let count = payload.count();
+        self.backlog_idxs.insert(count, idx);
+        // Memcpy into buffer
+        // Safety: These indicies are correct by construction
+        *unsafe { self.buffer.get_unchecked_mut(idx) } = payload;
+        Ok(())
+    }
+    fn remove(&mut self, count: &Count) -> Option<Payload> {
+        // Try to find the associated entry
+        let idx = self.backlog_idxs.remove(count)?;
+        // Recycle the index
+        self.free_idxs.push_back(idx);
+        // Return the data
+        // Safety: These indicies are correct by construction
+        Some(*unsafe { self.buffer.get_unchecked(idx) })
+    }
+}
 
 fn main() -> anyhow::Result<()> {
-    // Pin core
-    core_affinity::set_for_current(CoreId { id: 8 });
-
-    let (s, r) = bounded(100);
-
-    let handle = std::thread::spawn(move || {
-        core_affinity::set_for_current(CoreId { id: 8 });
-        let mut counts = vec![];
-        while let Ok(mut v) = r.recv() {
-            counts.append(&mut v);
-        }
-        // And process
-        println!("Captured {} packets!", counts.len());
-        counts.sort();
-        let mut deltas: Vec<_> = counts.windows(2).map(|v| v[1] - v[0]).collect();
-        deltas.sort();
-        dbg!(deltas.iter().dedup_with_count().collect::<Vec<_>>());
-    });
-
-    let mut cap = BulkUdpCapture::new(60000, 512, 8200)?;
-    cap.clear()?;
-
-    for _ in 0..ITERS {
-        let v: Vec<_> = cap
-            .capture()?
-            .iter()
-            .map(|v| u64::from_be_bytes(v[..8].try_into().unwrap()))
-            .collect();
-        s.send(v).unwrap();
+    // Bind this thread to a core that shares a NUMA node with the NIC
+    if !core_affinity::set_for_current(CoreId { id: 8 }) {
+        bail!("Couldn't set core affinity");
     }
-    drop(s);
+    // Create UDP socket
+    let socket = Socket::new(Domain::IPV4, Type::DGRAM, None)?;
+    // Bind our listening address
+    let address: SocketAddr = "0.0.0.0:60000".parse().unwrap();
+    socket.bind(&address.into())?;
+    // Reuse local address without timeout
+    socket.reuse_address()?;
+    // Set the buffer size to 256 MB (as was done in STARE2)
+    let sock_buf_size = 256 * 1024 * 1024;
+    socket.set_recv_buffer_size(sock_buf_size)?;
+    // Set to nonblocking
+    socket.set_nonblocking(true)?;
 
-    handle.join().unwrap();
+    // Create some state
+    let mut buffer = [MaybeUninit::zeroed(); UDP_PAYLOAD];
+    let mut rb = ReorderBuffer::new(BACKLOG_BUFFER_PAYLOADS);
+    let mut block_buffer = vec![Payload::default(); BLOCK_PAYLOADS];
+
+    // Clear buffered packets
+    clear_buffered_packets(&socket, &mut buffer)?;
+
+    // "Warm up" by capturing a ton of packets
+    for _ in 0..WARMUP_PACKETS {
+        capture(&socket, &mut buffer)?;
+    }
+
+    let mut first_payload = true;
+    let mut oldest_count = 0;
+    let mut drops = 0;
+    let mut processed = 0;
+
+    // Sort N blocks, printing dropped packets
+    for _ in 0..BLOCKS_TO_SORT {
+        for _ in 0..block_buffer.len() {
+            // ----- CAPTURE
+
+            // Capture an arbitrary payload
+            capture(&socket, &mut buffer)?;
+            // Safety: buffer is now init, otherwise capture would have failed
+            let pl = Payload(unsafe { std::mem::transmute(buffer) });
+            // Decode its count
+            let count = pl.count();
+            if first_payload {
+                oldest_count = count;
+                first_payload = false;
+            }
+
+            // ----- SORT
+            let mut to_fill: HashSet<_> = (0..block_buffer.len()).collect();
+
+            // Find its position in this block
+            if count < oldest_count {
+                // Drop this payload, it happened in the past
+                drops += 1;
+            } else if count >= oldest_count + block_buffer.len() as u64 {
+                // Packet is destined for the future, insert into reorder buf
+                // If the buffer fills up, panic. This shouldn't happen.
+                rb.insert(pl).unwrap();
+            } else {
+                let idx = (count - oldest_count) as usize;
+                // Remove this idx from the `to_fill` entry
+                to_fill.remove(&idx);
+                // Packet is for this block! Insert into it's position
+                block_buffer[idx] = pl;
+                processed += 1;
+            }
+
+            // Now we'll fill in gaps with past data, if we have it
+            // Otherwise replace with zeros and increment the drop count
+            for idx in to_fill {
+                let count = idx as u64 + oldest_count;
+                if let Some(pl) = rb.remove(&count) {
+                    block_buffer[idx] = pl;
+                    processed += 1;
+                } else {
+                    block_buffer[idx] = Payload::default();
+                    drops += 1;
+                }
+            }
+        }
+        // At this point, we'd send the "sorted" block to the next stage
+        // Move the oldest count forward by the block size
+        oldest_count += block_buffer.len() as u64;
+    }
+
+    println!("Dropped {drops} packets while processing {processed} packets.");
+    println!(
+        "That's a drop rate of {}%",
+        100.0 * drops as f32 / (drops + processed) as f32
+    );
     Ok(())
 }
