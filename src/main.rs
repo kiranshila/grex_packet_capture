@@ -176,9 +176,7 @@ fn main() -> anyhow::Result<()> {
         loop {
             sink_buf.pop();
             count += 1;
-            if count == BLOCKS_TO_SORT {
-                break;
-            }
+            println!("{count}");
         }
     });
 
