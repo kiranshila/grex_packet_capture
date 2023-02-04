@@ -1,6 +1,5 @@
 use anyhow::bail;
 use core_affinity::CoreId;
-use crossbeam::channel::bounded;
 use libc::EAGAIN;
 use socket2::{Domain, Socket, Type};
 use std::{
@@ -9,6 +8,7 @@ use std::{
     mem::MaybeUninit,
     net::SocketAddr,
 };
+use thingbuf::mpsc::blocking;
 
 const UDP_PAYLOAD: usize = 8200;
 const WARMUP_PACKETS: usize = 1_000_000;
@@ -142,7 +142,7 @@ fn main() -> anyhow::Result<()> {
     let mut to_fill = vec![true; BLOCK_PAYLOADS];
 
     // Create the channel to bench the copies
-    let (s, r) = bounded(100);
+    let (s, r) = blocking::channel(10);
 
     // Spawn a thread to "sink" the payloads
     let handle = std::thread::spawn(move || {
