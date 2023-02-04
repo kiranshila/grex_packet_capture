@@ -1,5 +1,6 @@
 use anyhow::bail;
 use core_affinity::CoreId;
+use crossbeam::channel::bounded;
 use libc::EAGAIN;
 use socket2::{Domain, Socket, Type};
 use std::{
@@ -14,7 +15,7 @@ const WARMUP_PACKETS: usize = 1_000_000;
 const BACKLOG_BUFFER_PAYLOADS: usize = 1024;
 const BLOCK_PAYLOADS: usize = 32_768;
 
-const BLOCKS_TO_SORT: usize = 1024;
+const BLOCKS_TO_SORT: usize = 64;
 
 fn clear_buffered_packets(
     sock: &Socket,
@@ -140,6 +141,20 @@ fn main() -> anyhow::Result<()> {
     let mut block_buffer = vec![Payload::default(); BLOCK_PAYLOADS];
     let mut to_fill = vec![true; BLOCK_PAYLOADS];
 
+    // Create the channel to bench the copies
+    let (s, r) = bounded(100);
+
+    // Spawn a thread to "sink" the payloads
+    let handle = std::thread::spawn(move || {
+        // Pin to the next core on the numa node
+        if !core_affinity::set_for_current(CoreId { id: 9 }) {
+            panic!("Couldn't set core affinity");
+        }
+        loop {
+            r.recv().unwrap();
+        }
+    });
+
     // Clear buffered packets
     clear_buffered_packets(&socket, &mut buffer)?;
 
@@ -205,7 +220,11 @@ fn main() -> anyhow::Result<()> {
         // Move the oldest count forward by the block size
         oldest_count += block_buffer.len() as u64;
         // At this point, we'd send the "sorted" block to the next stage
+        s.send(block_buffer.clone()).unwrap();
     }
+
+    // Join the sink
+    handle.join().unwrap();
 
     println!("Dropped {drops} packets while processing {processed} packets.");
     println!(
