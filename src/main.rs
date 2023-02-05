@@ -166,13 +166,16 @@ fn main() -> anyhow::Result<()> {
     let (s, r) = with_recycle(4, PayloadRecycle::new());
 
     // Spawn a thread to "sink" the payloads
-    let handle = std::thread::spawn(move || {
-        // Pin to the next core on the numa node
-        if !core_affinity::set_for_current(CoreId { id: 9 }) {
-            panic!("Couldn't set core affinity");
-        }
-        while r.recv().is_some() {}
-    });
+    let handle = std::thread::Builder::new()
+        .name("sink".to_string())
+        .spawn(move || {
+            // Pin to the next core on the numa node
+            if !core_affinity::set_for_current(CoreId { id: 9 }) {
+                panic!("Couldn't set core affinity");
+            }
+            while r.recv().is_some() {}
+        })
+        .unwrap();
 
     // Clear buffered packets
     clear_buffered_packets(&socket, &mut buffer)?;
