@@ -35,7 +35,6 @@ impl PayloadRecycle {
 
 impl Recycle<PayloadBlock> for PayloadRecycle {
     fn new_element(&self) -> PayloadBlock {
-        println!("ALLOC");
         PayloadBlock([[0u8; UDP_PAYLOAD]; BLOCK_PAYLOADS])
     }
 
