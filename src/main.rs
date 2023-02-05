@@ -67,7 +67,14 @@ fn main() -> anyhow::Result<()> {
     // Spawn a thread to "sink" the payloads
     std::thread::spawn(move || {
         core_affinity::set_for_current(CoreId { id: 9 });
-        while r.recv().is_some() {}
+        while let Some(block) = r.recv() {
+            let counts: Vec<_> = block.par_iter().map(count).collect();
+            println!(
+                "Min - {}, Max - {}",
+                counts.iter().min().unwrap(),
+                counts.iter().max().unwrap()
+            )
+        }
     });
 
     // "Warm up" by capturing a ton of packets
