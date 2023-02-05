@@ -56,7 +56,9 @@ async fn main() -> anyhow::Result<()> {
 
     // Get the allocs out of the way to warm up the channel
     for _ in 0..4 {
-        s.send_ref().await?;
+        for mut pl in s.send_ref().await?.0 {
+            pl.write([0u8; UDP_PAYLOAD]);
+        }
         r.recv_ref().await;
     }
 
