@@ -47,6 +47,7 @@ impl Recycle<PayloadBlock> for PayloadRecycle {
 fn main() -> anyhow::Result<()> {
     // Create the runtime
     let rt = Builder::new_multi_thread()
+        .enable_io()
         .thread_stack_size(256 * 1024 * 1024)
         .max_blocking_threads(4)
         .build()?;
