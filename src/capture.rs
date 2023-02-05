@@ -135,6 +135,7 @@ impl Capture {
         // Move the oldest count forward by the block size
         self.oldest_count += block_slot.0.len() as u64;
         let block_process_time = block_process.elapsed();
+        drop(block_slot);
         // Return timing info
         Ok((packet_time, block_process_time))
     }
