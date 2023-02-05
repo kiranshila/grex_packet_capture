@@ -1,6 +1,14 @@
 use socket2::{Domain, Socket, Type};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use thiserror::Error;
 use tokio::net::UdpSocket;
+
+#[derive(Error, Debug)]
+/// Errors that can be produced from captures
+pub enum Error {
+    #[error("We recieved a payload which wasn't the size we expected {0}")]
+    SizeMismatch(usize),
+}
 
 pub struct Capture {
     pub sock: UdpSocket,
@@ -23,5 +31,14 @@ impl Capture {
         // Replace the socket2 socket with a tokio socket
         let sock = UdpSocket::from_std(socket.into())?;
         Ok(Self { sock })
+    }
+
+    pub async fn capture(&mut self, buf: &mut [u8]) -> anyhow::Result<()> {
+        let n = self.sock.recv(buf).await?;
+        if n != buf.len() {
+            Err(Error::SizeMismatch(n).into())
+        } else {
+            Ok(())
+        }
     }
 }
