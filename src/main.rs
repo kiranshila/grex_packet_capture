@@ -66,11 +66,13 @@ fn main() -> anyhow::Result<()> {
 
     // Spawn a thread to "sink" the payloads
     std::thread::spawn(move || {
+        core_affinity::set_for_current(CoreId { id: 9 });
         while let Some(r) = r.recv_ref() {
             println!("new packet with len {}", r.0.len());
         }
     });
     std::thread::spawn(move || {
+        core_affinity::set_for_current(CoreId { id: 10 });
         while let Some(r2) = r2.recv_ref() {
             println!("new packet with len {}", r2.0.len());
         }
