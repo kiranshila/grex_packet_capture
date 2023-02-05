@@ -33,6 +33,8 @@ impl Capture {
         // Set the buffer size to 1GB
         let sock_buf_size = 256 * 1024 * 1024 * 4;
         socket.set_recv_buffer_size(sock_buf_size)?;
+        // Check
+        println!("{}", socket.recv_buffer_size()?);
         // Set to nonblocking
         socket.set_nonblocking(true)?;
         // Replace the socket2 socket with a tokio socket
