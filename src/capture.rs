@@ -1,10 +1,11 @@
 use socket2::{Domain, Socket, Type};
+use std::hint::spin_loop;
+use std::net::UdpSocket;
 use std::{
     collections::HashMap,
     net::{IpAddr, Ipv4Addr, SocketAddr},
 };
 use thiserror::Error;
-use tokio::net::UdpSocket;
 
 use crate::{Count, Payload, BACKLOG_BUFFER_PAYLOADS, UDP_PAYLOAD};
 
@@ -36,7 +37,7 @@ impl Capture {
         // Set to nonblocking
         socket.set_nonblocking(true)?;
         // Replace the socket2 socket with a tokio socket
-        let sock = UdpSocket::from_std(socket.into())?;
+        let sock = socket.into();
         Ok(Self {
             sock,
             buffer: [0u8; UDP_PAYLOAD],
@@ -44,8 +45,20 @@ impl Capture {
         })
     }
 
-    pub async fn capture(&mut self) -> anyhow::Result<()> {
-        let n = self.sock.recv(&mut self.buffer).await?;
+    pub fn capture(&mut self) -> anyhow::Result<()> {
+        let n = loop {
+            match self.sock.recv(&mut self.buffer) {
+                Ok(n) => break n,
+                Err(e) => {
+                    if let Some(v) = e.raw_os_error() {
+                        if v == 1 {
+                            // EAGAIN
+                            continue;
+                        }
+                    }
+                }
+            }
+        };
         if n != self.buffer.len() {
             Err(Error::SizeMismatch(n).into())
         } else {

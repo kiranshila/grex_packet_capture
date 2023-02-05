@@ -3,12 +3,9 @@ mod capture;
 use crate::capture::Capture;
 use anyhow::bail;
 use core_affinity::CoreId;
-use std::hint::spin_loop;
 use std::thread::yield_now;
 use std::time::{Duration, Instant};
-use thingbuf::{mpsc::with_recycle, Recycle};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::runtime::Builder;
+use thingbuf::{mpsc::blocking::with_recycle, Recycle};
 
 const UDP_PAYLOAD: usize = 8200;
 const WARMUP_PACKETS: usize = 1_000_000;
@@ -46,11 +43,7 @@ impl Recycle<PayloadBlock> for PayloadRecycle {
     }
 }
 
-#[tokio::main(flavor = "current_thread")]
-async fn main() -> anyhow::Result<()> {
-    // Setup the monitoring
-    console_subscriber::init();
-
+fn main() -> anyhow::Result<()> {
     // Bind this thread to a core that shares a NUMA node with the NIC
     if !core_affinity::set_for_current(CoreId { id: 8 }) {
         bail!("Couldn't set core affinity");
@@ -64,8 +57,8 @@ async fn main() -> anyhow::Result<()> {
 
     // Preallocate the buffer with non-uninit values
     for _ in 0..RING_BLOCKS {
-        s.send_ref().await?;
-        r.recv_ref().await;
+        s.send_ref()?;
+        r.recv_ref();
     }
 
     // Sneaky bit manipulation (all bits to 1 to set that the index corresponding with *that bit* needs to be filled)
@@ -85,7 +78,7 @@ async fn main() -> anyhow::Result<()> {
 
     // "Warm up" by capturing a ton of packets
     for _ in 0..WARMUP_PACKETS {
-        cap.capture().await?;
+        cap.capture()?;
     }
 
     let mut first_payload = true;
@@ -96,7 +89,7 @@ async fn main() -> anyhow::Result<()> {
     // Sort N blocks, printing dropped packets
     for _ in 0..BLOCKS_TO_SORT {
         // First block to grab a reference to the next slot in the queue
-        let mut slot = s.send_ref().await.unwrap();
+        let mut slot = s.send_ref().unwrap();
 
         // Create a timer for average block processing
         let mut time = Duration::default();
@@ -105,7 +98,7 @@ async fn main() -> anyhow::Result<()> {
             // ----- CAPTURE
 
             // Capture an arbitrary payload
-            cap.capture().await?;
+            cap.capture()?;
 
             // Time starts now to benchmark processing perf
             let now = Instant::now();
