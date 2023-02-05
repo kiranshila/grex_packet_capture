@@ -4,13 +4,11 @@ use libc::EAGAIN;
 use socket2::{Domain, Socket, Type};
 use std::{
     collections::{HashMap, VecDeque},
-    hint::{self, spin_loop},
     mem::MaybeUninit,
     net::SocketAddr,
-    sync::Arc,
     time::{Duration, Instant},
 };
-use thingbuf::{Recycle, ThingBuf};
+use thingbuf::{mpsc::blocking::with_recycle, Recycle};
 
 const UDP_PAYLOAD: usize = 8200;
 const WARMUP_PACKETS: usize = 1_000_000;
@@ -57,7 +55,7 @@ fn capture(sock: &Socket, packet_buffer: &mut [MaybeUninit<u8>]) -> anyhow::Resu
                 }
             }
         }
-        hint::spin_loop();
+        std::hint::spin_loop();
     }
     Ok(())
 }
@@ -165,9 +163,7 @@ fn main() -> anyhow::Result<()> {
     let mut to_fill = BLOCK_PAYLOADS - 1;
 
     // Create the channel to bench the copies
-    let source_buf = Arc::new(ThingBuf::with_recycle(4, PayloadRecycle::new()));
-
-    let sink_buf = source_buf.clone();
+    let (s, r) = with_recycle(4, PayloadRecycle::new());
 
     // Spawn a thread to "sink" the payloads
     let handle = std::thread::spawn(move || {
@@ -175,16 +171,8 @@ fn main() -> anyhow::Result<()> {
         if !core_affinity::set_for_current(CoreId { id: 9 }) {
             panic!("Couldn't set core affinity");
         }
-        let mut count = 0;
         loop {
-            if sink_buf.pop().is_some() {
-                count += 1;
-                if count == BLOCKS_TO_SORT {
-                    break;
-                }
-            } else {
-                std::thread::yield_now();
-            }
+            r.recv().unwrap();
         }
     });
 
@@ -204,14 +192,7 @@ fn main() -> anyhow::Result<()> {
     // Sort N blocks, printing dropped packets
     for _ in 0..BLOCKS_TO_SORT {
         // First block to grab a reference to the next slot in the queue
-        let mut slot = loop {
-            match source_buf.push_ref() {
-                Ok(slot) => {
-                    break slot;
-                }
-                Err(_) => std::thread::yield_now(),
-            }
-        };
+        let mut slot = s.send_ref().unwrap();
 
         // Create a timer for average block processing
         let mut time = Duration::default();
@@ -288,6 +269,8 @@ fn main() -> anyhow::Result<()> {
             block_process_time.as_micros()
         );
     }
+    // Drop the channel to close it (I think this happens anyway due to lexical scoping rules)
+    drop(s);
 
     // Join the sink
     handle.join().unwrap();
