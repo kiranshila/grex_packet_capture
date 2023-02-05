@@ -20,26 +20,17 @@ const BLOCKS_TO_SORT: usize = 512;
 async fn capture(sock: &UdpSocket, buf: &mut [u8]) -> anyhow::Result<()> {
     let n = sock.recv(buf).await?;
     if n != buf.len() {
-        bail!("Wong size");
+        bail!("Wrong size");
     }
     Ok(())
 }
 
 type Count = u64;
 
-#[derive(Debug, Clone, Copy)]
-struct Payload([u8; UDP_PAYLOAD]);
+pub type Payload = [u8; UDP_PAYLOAD];
 
-impl Payload {
-    fn count(&self) -> Count {
-        u64::from_be_bytes(self.0[0..8].try_into().unwrap())
-    }
-}
-
-impl Default for Payload {
-    fn default() -> Self {
-        Self([0u8; UDP_PAYLOAD])
-    }
+fn count(pl: &Payload) -> Count {
+    u64::from_be_bytes(pl[0..8].try_into().unwrap())
 }
 
 #[derive(Clone)]
@@ -127,9 +118,8 @@ async fn main() -> anyhow::Result<()> {
             // Time starts now to benchmark processing perf
             let now = Instant::now();
 
-            let pl = Payload(buffer);
             // Decode its count
-            let count = pl.count();
+            let count = count(&buffer);
             if first_payload {
                 oldest_count = count;
                 first_payload = false;
@@ -143,14 +133,14 @@ async fn main() -> anyhow::Result<()> {
                 drops += 1;
             } else if count >= oldest_count + slot.0.len() as u64 {
                 // Packet is destined for the future, insert into reorder buf
-                backlog.insert(count, pl);
+                backlog.insert(count, buffer);
             } else {
                 let idx = (count - oldest_count) as usize;
                 // Remove this idx from the `to_fill` entry
                 to_fill &= !(1 << idx);
                 // Packet is for this block! Insert into it's position
                 // Safety: the index is correct by construction as count-oldest_count will always be inbounds
-                slot.0[idx].write(pl);
+                slot.0[idx].write(buffer);
                 processed += 1;
             }
 
@@ -170,7 +160,9 @@ async fn main() -> anyhow::Result<()> {
                     buf.write(pl);
                     processed += 1;
                 } else {
-                    buf.write(Payload::default());
+                    let mut pl = [0u8; UDP_PAYLOAD];
+                    (pl[0..8]).clone_from_slice(&count.to_be_bytes());
+                    buf.write(pl);
                     drops += 1;
                 }
             }
