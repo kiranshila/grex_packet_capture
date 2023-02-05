@@ -8,6 +8,7 @@ use std::{
     mem::MaybeUninit,
     net::SocketAddr,
     sync::Arc,
+    time::{Duration, Instant},
 };
 use thingbuf::{Recycle, ThingBuf};
 
@@ -210,11 +211,18 @@ fn main() -> anyhow::Result<()> {
             }
         };
 
+        // Create a timer for average block processing
+        let mut time = Duration::default();
+
         for _ in 0..slot.0.len() {
             // ----- CAPTURE
 
             // Capture an arbitrary payload
             capture(&socket, &mut buffer)?;
+
+            // Time starts now to benchmark processing perf
+            let now = Instant::now();
+
             // Safety: buffer is now init, otherwise capture would have failed
             let pl = Payload(unsafe { std::mem::transmute(buffer) });
             // Decode its count
@@ -242,6 +250,9 @@ fn main() -> anyhow::Result<()> {
                 slot.0[idx].write(pl);
                 processed += 1;
             }
+
+            // Stop the timer and add to the block time
+            time += now.elapsed();
         }
         // Now we'll fill in gaps with past data, if we have it
         // Otherwise replace with zeros and increment the drop count
@@ -260,6 +271,12 @@ fn main() -> anyhow::Result<()> {
         // Move the oldest count forward by the block size
         oldest_count += slot.0.len() as u64;
         // At this point, we'd send the "sorted" block to the next stage by dropping slot
+        // Print timing info
+        println!(
+            "Processing {BLOCK_PAYLOADS} packets took {} seconds, or {} per packet",
+            time.as_secs(),
+            time.as_secs_f32() / BLOCK_PAYLOADS as f32
+        );
     }
 
     // Join the sink
