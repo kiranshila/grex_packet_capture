@@ -107,7 +107,7 @@ impl Capture {
                 to_fill &= !(1 << idx);
                 // Packet is for this block! Insert into it's position
                 // Safety: the index is correct by construction as count-oldest_count will always be inbounds
-                block_slot.0[idx].write(self.buffer);
+                unsafe { block_slot.0.get_unchecked_mut(idx) }.write(self.buffer);
                 self.processed += 1;
             }
             // Stop the timer and add to the block time
@@ -135,7 +135,6 @@ impl Capture {
         // Move the oldest count forward by the block size
         self.oldest_count += block_slot.0.len() as u64;
         let block_process_time = block_process.elapsed();
-        drop(block_slot);
         // Return timing info
         Ok((packet_time, block_process_time))
     }
