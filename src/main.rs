@@ -23,7 +23,7 @@ fn count(pl: &Payload) -> Count {
     u64::from_be_bytes(pl[0..8].try_into().unwrap())
 }
 
-pub struct PayloadBlock(Box<[Payload; BLOCK_PAYLOADS]>);
+pub type PayloadBlock = Box<[Payload; BLOCK_PAYLOADS]>;
 
 pub struct PayloadRecycle;
 
@@ -35,7 +35,7 @@ impl PayloadRecycle {
 
 impl Recycle<PayloadBlock> for PayloadRecycle {
     fn new_element(&self) -> PayloadBlock {
-        PayloadBlock(Box::new([[0u8; UDP_PAYLOAD]; BLOCK_PAYLOADS]))
+        Box::new([[0u8; UDP_PAYLOAD]; BLOCK_PAYLOADS])
     }
 
     fn recycle(&self, _: &mut PayloadBlock) {
@@ -88,7 +88,7 @@ fn main() -> anyhow::Result<()> {
         // Create a timer for average block processing
         let mut time = Duration::default();
 
-        for _ in 0..slot.0.len() {
+        for _ in 0..slot.len() {
             // ----- CAPTURE
 
             // Capture an arbitrary payload
@@ -110,7 +110,7 @@ fn main() -> anyhow::Result<()> {
             if count < oldest_count {
                 // Drop this payload, it happened in the past
                 drops += 1;
-            } else if count >= oldest_count + slot.0.len() as u64 {
+            } else if count >= oldest_count + slot.len() as u64 {
                 // Packet is destined for the future, insert into reorder buf
                 cap.backlog.insert(count, cap.buffer);
             } else {
@@ -118,7 +118,7 @@ fn main() -> anyhow::Result<()> {
                 // Remove this idx from the `to_fill` entry
                 to_fill &= !(1 << idx);
                 // Packet is for this block! Insert into it's position
-                slot.0[idx] = cap.buffer;
+                slot[idx] = cap.buffer;
                 processed += 1;
             }
 
@@ -129,7 +129,7 @@ fn main() -> anyhow::Result<()> {
         // Otherwise replace with zeros and increment the drop count
         let block_process = Instant::now();
 
-        for (idx, buf) in slot.0.iter_mut().enumerate() {
+        for (idx, buf) in slot.iter_mut().enumerate() {
             // Check if this bit needs to be filled
             if (to_fill >> idx) & 1 == 1 {
                 // Then either fill with data from the past, or set it as default
@@ -149,7 +149,7 @@ fn main() -> anyhow::Result<()> {
         // Then reset to_fill
         to_fill = BLOCK_PAYLOADS - 1;
         // Move the oldest count forward by the block size
-        oldest_count += slot.0.len() as u64;
+        oldest_count += slot.len() as u64;
         let block_process_time = block_process.elapsed();
         // At this point, we'd send the "sorted" block to the next stage by dropping slot
         // Print timing info
