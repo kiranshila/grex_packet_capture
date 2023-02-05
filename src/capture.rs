@@ -1,11 +1,10 @@
+use socket2::{Domain, Socket, Type};
 use std::{
     collections::HashMap,
     mem::MaybeUninit,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     time::{Duration, Instant},
 };
-
-use socket2::{Domain, Socket, Type};
 use thingbuf::Recycle;
 use thiserror::Error;
 use tokio::net::UdpSocket;
@@ -21,7 +20,7 @@ pub struct Capture {
     /// The socket fd itself
     sock: UdpSocket,
     /// A reusable container to capture into
-    buf: PayloadBytes,
+    buf: [u8; UDP_PAYLOAD],
     /// The oldest count for the current block
     oldest_count: Count,
     /// A flag to indicate if we've captured our first packet
@@ -54,7 +53,7 @@ impl Capture {
 
         Ok(Self {
             sock,
-            buf: PayloadBytes::default(),
+            buf: [0u8; UDP_PAYLOAD],
             oldest_count: 0,
             first_packet: false,
             backlog: HashMap::with_capacity(BACKLOG_BUFFER_PAYLOADS),
@@ -68,8 +67,8 @@ impl Capture {
     /// # Errors
     /// Returns an error on socket IO errors and size mismatch
     pub async fn capture(&mut self) -> anyhow::Result<()> {
-        let n = self.sock.recv(&mut self.buf.0).await?;
-        if n != self.buf.0.len() {
+        let n = self.sock.recv(&mut self.buf).await?;
+        if n != self.buf.len() {
             Err(Error::SizeMismatch(n).into())
         } else {
             Ok(())
@@ -94,8 +93,10 @@ impl Capture {
             self.capture().await?;
             // Start the packet timer
             let packet_start_time = Instant::now();
+            // Make the payload
+            let pl = PayloadBytes(self.buf);
             // Decode the count
-            let count = self.buf.count();
+            let count = pl.count();
             // Deal with the first packet
             if self.first_packet {
                 self.oldest_count = count;
@@ -108,13 +109,13 @@ impl Capture {
                 self.drops += 1;
             } else if count >= self.oldest_count + block_buffer.0.len() as u64 {
                 // Packet is destined for the future, insert into reorder buf
-                self.backlog.insert(count, self.buf);
+                self.backlog.insert(count, pl);
             } else {
                 let idx = (count - self.oldest_count) as usize;
                 // Remove this idx from the `to_fill` entry
                 to_fill &= !(1 << idx);
                 // Packet is for this block! Insert into it's position
-                block_buffer.0[idx].write(self.buf);
+                block_buffer.0[idx].write(pl);
                 self.processed += 1;
             }
             // Stop the packet timer
