@@ -3,8 +3,8 @@ mod capture;
 use crate::capture::Capture;
 use anyhow::bail;
 use core_affinity::CoreId;
-use std::mem::MaybeUninit;
-use thingbuf::{mpsc::with_recycle, Recycle};
+use std::{hint::spin_loop, mem::MaybeUninit};
+use thingbuf::{mpsc::blocking::with_recycle, Recycle};
 
 const UDP_PAYLOAD: usize = 8200;
 const WARMUP_PACKETS: usize = 1_000_000;
@@ -38,8 +38,7 @@ impl Recycle<PayloadBlock> for PayloadRecycle {
     }
 }
 
-#[tokio::main(flavor = "current_thread")]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
     // Setup the monitoring
     console_subscriber::init();
 
@@ -55,18 +54,18 @@ async fn main() -> anyhow::Result<()> {
     let (s, r) = with_recycle(4, PayloadRecycle::new());
 
     // Spawn a task to "sink" the payloads
-    tokio::spawn(async move { while r.recv_ref().await.is_some() {} });
+    let handle = std::thread::spawn(move || while r.recv_ref().is_some() {});
 
     // "Warm up" by capturing a ton of packets
     for _ in 0..WARMUP_PACKETS {
-        cap.capture().await?;
+        cap.capture()?;
     }
 
     // Sort N blocks, printing dropped packets
     for _ in 0..BLOCKS_TO_SORT {
         // First block to grab a reference to the next slot in the queue
-        let slot = s.send_ref().await.unwrap();
-        let (p, b) = cap.next_block(slot).await?;
+        let slot = s.send_ref().unwrap();
+        let (p, b) = cap.next_block(slot)?;
         // Print timing info
         println!(
             "Processing - {} us per packet\tBlock - {} us",
@@ -83,5 +82,6 @@ async fn main() -> anyhow::Result<()> {
         "That's a drop rate of {}%",
         100.0 * cap.drops as f32 / (cap.drops + cap.processed) as f32
     );
+    handle.join().unwrap();
     Ok(())
 }

@@ -1,3 +1,4 @@
+use crate::{Count, Payload, PayloadBlock, BACKLOG_BUFFER_PAYLOADS, BLOCK_PAYLOADS, UDP_PAYLOAD};
 use socket2::{Domain, Socket, Type};
 use std::{
     collections::HashMap,
@@ -5,11 +6,8 @@ use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     time::{Duration, Instant},
 };
-use thingbuf::mpsc::SendRef;
+use thingbuf::mpsc::blocking::SendRef;
 use thiserror::Error;
-use tokio::net::UdpSocket;
-
-use crate::{Count, Payload, PayloadBlock, BACKLOG_BUFFER_PAYLOADS, BLOCK_PAYLOADS, UDP_PAYLOAD};
 
 #[derive(Error, Debug)]
 /// Errors that can be produced from captures
@@ -19,8 +17,8 @@ pub enum Error {
 }
 
 pub struct Capture {
-    pub sock: UdpSocket,
-    pub buffer: Payload,
+    pub sock: Socket,
+    pub buffer: [MaybeUninit<u8>; UDP_PAYLOAD],
     pub backlog: HashMap<Count, Payload>,
     pub drops: usize,
     pub processed: usize,
@@ -42,11 +40,9 @@ impl Capture {
         socket.set_recv_buffer_size(sock_buf_size)?;
         // Set to nonblocking
         socket.set_nonblocking(true)?;
-        // Replace the socket2 socket with a tokio socket
-        let sock = UdpSocket::from_std(socket.into())?;
         Ok(Self {
-            sock,
-            buffer: [0u8; UDP_PAYLOAD],
+            sock: socket,
+            buffer: [MaybeUninit::uninit(); UDP_PAYLOAD],
             backlog: HashMap::with_capacity(BACKLOG_BUFFER_PAYLOADS),
             drops: 0,
             processed: 0,
@@ -55,16 +51,32 @@ impl Capture {
         })
     }
 
-    pub async fn capture(&mut self) -> anyhow::Result<()> {
-        let n = self.sock.recv(&mut self.buffer).await?;
-        if n != self.buffer.len() {
-            Err(Error::SizeMismatch(n).into())
-        } else {
-            Ok(())
+    pub fn capture(&mut self) -> anyhow::Result<()> {
+        loop {
+            match self.sock.recv_from(&mut self.buffer) {
+                Ok((size, _)) => {
+                    if size == UDP_PAYLOAD {
+                        // Buffer now contains valid data
+                        break;
+                    } else {
+                        return Err(Error::SizeMismatch(size).into());
+                    }
+                }
+                Err(e) => {
+                    if let Some(os) = e.raw_os_error() {
+                        // EAGAIN
+                        if os != 11 {
+                            return Err(e.into());
+                        }
+                    }
+                }
+            }
+            std::hint::spin_loop();
         }
+        Ok(())
     }
 
-    pub async fn next_block(
+    pub fn next_block(
         &mut self,
         mut block_slot: SendRef<'_, PayloadBlock>,
     ) -> anyhow::Result<(Duration, Duration)> {
@@ -77,7 +89,7 @@ impl Capture {
         for _ in 0..block_size {
             // ----- CAPTURE
             // Capture the next payload
-            if let Err(e) = self.capture().await {
+            if let Err(e) = self.capture() {
                 match e.downcast() {
                     Ok(e) => match e {
                         // Just drop and continue of corrupt payloads
@@ -88,8 +100,12 @@ impl Capture {
             }
             // Start the packet processing timer
             let now = Instant::now();
+
+            // Data is now valid
+            let buffer = unsafe { std::mem::transmute(self.buffer) };
+
             // Decode its count
-            let count = count(&self.buffer);
+            let count = count(&buffer);
             if self.first_payload {
                 self.oldest_count = count;
                 self.first_payload = false;
@@ -101,14 +117,14 @@ impl Capture {
                 self.drops += 1;
             } else if count >= self.oldest_count + block_size as u64 {
                 // Packet is destined for the future, insert into reorder buf
-                self.backlog.insert(count, self.buffer);
+                self.backlog.insert(count, buffer);
             } else {
                 let idx = (count - self.oldest_count) as usize;
                 // Remove this idx from the `to_fill` entry
                 to_fill &= !(1 << idx);
                 // Packet is for this block! Insert into it's position
                 // Safety: the index is correct by construction as count-oldest_count will always be inbounds
-                block_slot.0[idx].write(self.buffer);
+                block_slot.0[idx].write(buffer);
                 self.processed += 1;
             }
             // Stop the timer and add to the block time
