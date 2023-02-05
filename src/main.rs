@@ -78,7 +78,7 @@ async fn main() -> anyhow::Result<()> {
                 for payload in v.0.iter() {
                     big_sum += payload.iter().fold(0.0, |x, b| x + *b as f32);
                 }
-                println!("{}", big_sum);
+                //println!("{}", big_sum);
             }
             Err(e) => match e {
                 thingbuf::mpsc::errors::TryRecvError::Empty => spin_loop(),
