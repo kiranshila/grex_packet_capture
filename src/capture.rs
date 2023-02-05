@@ -9,7 +9,7 @@ use thingbuf::mpsc::SendRef;
 use thiserror::Error;
 use tokio::net::UdpSocket;
 
-use crate::{Count, Payload, PayloadBlock, BACKLOG_BUFFER_PAYLOADS, UDP_PAYLOAD};
+use crate::{Count, Payload, PayloadBlock, BACKLOG_BUFFER_PAYLOADS, BLOCK_PAYLOADS, UDP_PAYLOAD};
 
 #[derive(Error, Debug)]
 /// Errors that can be produced from captures
@@ -70,7 +70,7 @@ impl Capture {
     ) -> anyhow::Result<(Duration, Duration)> {
         let block_size = block_slot.0.len();
         // Sneaky bit manipulation (all bits to 1 to set that the index corresponding with *that bit* needs to be filled)
-        let mut to_fill = block_size - 1;
+        let mut to_fill = BLOCK_PAYLOADS - 1;
         // Create a timer for average block processing
         let mut packet_time = Duration::default();
         // Iterate through every payload in this block
@@ -95,22 +95,22 @@ impl Capture {
                 self.first_payload = false;
             }
             // ----- SORT
-            // // Find its position in this block
-            // if count < self.oldest_count {
-            //     // Drop this payload, it happened in the past
-            //     self.drops += 1;
-            // } else if count >= self.oldest_count + block_size as u64 {
-            //     // Packet is destined for the future, insert into reorder buf
-            //     self.backlog.insert(count, self.buffer);
-            // } else {
-            //     let idx = (count - self.oldest_count) as usize;
-            //     // Remove this idx from the `to_fill` entry
-            //     to_fill &= !(1 << idx);
-            //     // Packet is for this block! Insert into it's position
-            //     // Safety: the index is correct by construction as count-oldest_count will always be inbounds
-            //     unsafe { block_slot.0.get_unchecked_mut(idx) }.write(self.buffer);
-            //     self.processed += 1;
-            // }
+            // Find its position in this block
+            if count < self.oldest_count {
+                // Drop this payload, it happened in the past
+                self.drops += 1;
+            } else if count >= self.oldest_count + block_size as u64 {
+                // Packet is destined for the future, insert into reorder buf
+                self.backlog.insert(count, self.buffer);
+            } else {
+                let idx = (count - self.oldest_count) as usize;
+                // Remove this idx from the `to_fill` entry
+                to_fill &= !(1 << idx);
+                // Packet is for this block! Insert into it's position
+                // Safety: the index is correct by construction as count-oldest_count will always be inbounds
+                block_slot.0[idx].write(self.buffer);
+                self.processed += 1;
+            }
             // Stop the timer and add to the block time
             packet_time += now.elapsed();
         }
