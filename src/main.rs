@@ -256,6 +256,7 @@ fn main() -> anyhow::Result<()> {
         }
         // Now we'll fill in gaps with past data, if we have it
         // Otherwise replace with zeros and increment the drop count
+        let block_process = Instant::now();
         for (idx, _) in to_fill.into_iter().enumerate().filter(|(_, fill)| *fill) {
             let count = idx as u64 + oldest_count;
             if let Some(pl) = rb.remove(&count) {
@@ -270,12 +271,13 @@ fn main() -> anyhow::Result<()> {
         to_fill = vec![true; BLOCK_PAYLOADS];
         // Move the oldest count forward by the block size
         oldest_count += slot.0.len() as u64;
+        let block_process_time = block_process.elapsed();
         // At this point, we'd send the "sorted" block to the next stage by dropping slot
         // Print timing info
         println!(
-            "Processing {BLOCK_PAYLOADS} packets took {} us, or {} us per packet",
-            time.as_micros(),
-            time.as_micros() as f32 / BLOCK_PAYLOADS as f32
+            "Processing - {} us per packet\tBlock - {} us",
+            time.as_micros() as f32 / BLOCK_PAYLOADS as f32,
+            block_process_time.as_micros()
         );
     }
 
