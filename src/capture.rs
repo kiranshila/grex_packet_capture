@@ -14,13 +14,15 @@ const BACKLOG_BUFFER_PAYLOADS: usize = 4096;
 const BLOCK_PAYLOAD_POW: u32 = 15;
 const BLOCK_PAYLOADS: usize = 2usize.pow(BLOCK_PAYLOAD_POW);
 
+pub type PayloadBytes = [u8; UDP_PAYLOAD];
+
 #[derive(Debug)]
 /// Capture object to grab observation data from the network card
 pub struct Capture {
     /// The socket fd itself
     sock: UdpSocket,
     /// A reusable container to capture into
-    buf: [u8; UDP_PAYLOAD],
+    buf: PayloadBytes,
     /// The oldest count for the current block
     oldest_count: Count,
     /// A flag to indicate if we've captured our first packet
@@ -47,10 +49,8 @@ impl Capture {
         socket.set_recv_buffer_size(sock_buf_size)?;
         // Set to nonblocking
         socket.set_nonblocking(true)?;
-
         // Replace the socket2 socket with a tokio socket
         let sock = UdpSocket::from_std(socket.into())?;
-
         Ok(Self {
             sock,
             buf: [0u8; UDP_PAYLOAD],
@@ -90,13 +90,19 @@ impl Capture {
         for _ in 0..block_buffer.0.len() {
             // ----- Capture phase
             // Capture the next payload
-            self.capture().await?;
+            if let Err(e) = self.capture().await {
+                match e.downcast() {
+                    Ok(e) => match e {
+                        // Just drop and continue of corrupt payloads
+                        Error::SizeMismatch(_) => continue,
+                    },
+                    Err(e) => return Err(e),
+                }
+            }
             // Start the packet timer
             let packet_start_time = Instant::now();
-            // Make the payload
-            let pl = PayloadBytes(self.buf);
             // Decode the count
-            let count = pl.count();
+            let count = count(&self.buf);
             // Deal with the first packet
             if self.first_packet {
                 self.oldest_count = count;
@@ -109,13 +115,13 @@ impl Capture {
                 self.drops += 1;
             } else if count >= self.oldest_count + block_buffer.0.len() as u64 {
                 // Packet is destined for the future, insert into reorder buf
-                self.backlog.insert(count, pl);
+                self.backlog.insert(count, self.buf);
             } else {
                 let idx = (count - self.oldest_count) as usize;
                 // Remove this idx from the `to_fill` entry
                 to_fill &= !(1 << idx);
                 // Packet is for this block! Insert into it's position
-                block_buffer.0[idx].write(pl);
+                block_buffer.0[idx].write(self.buf);
                 self.processed += 1;
             }
             // Stop the packet timer
@@ -133,7 +139,10 @@ impl Capture {
                     buf.write(pl);
                     self.processed += 1;
                 } else {
-                    buf.write(PayloadBytes::default());
+                    // Create an empty payload with *this* count
+                    let mut dummy = [0u8; UDP_PAYLOAD];
+                    dummy[0..8].clone_from_slice(&count.to_be_bytes());
+                    buf.write(dummy);
                     self.drops += 1;
                 }
             }
@@ -157,21 +166,8 @@ pub enum Error {
 /// The size of a payload count (set by the FPGA)
 type Count = u64;
 
-#[derive(Debug, Clone, Copy)]
-/// Newtype wrapper for one observation of data
-pub struct PayloadBytes([u8; UDP_PAYLOAD]);
-
-impl PayloadBytes {
-    /// Decode the count header for this payload
-    fn count(&self) -> Count {
-        u64::from_be_bytes(self.0[0..8].try_into().unwrap())
-    }
-}
-
-impl Default for PayloadBytes {
-    fn default() -> Self {
-        Self([0u8; UDP_PAYLOAD])
-    }
+fn count(payload: &[u8]) -> Count {
+    u64::from_be_bytes(payload[0..8].try_into().unwrap())
 }
 
 #[derive(Clone)]
