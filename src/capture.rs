@@ -50,7 +50,7 @@ impl Capture {
                 Ok(n) => break n,
                 Err(e) => {
                     if let Some(v) = e.raw_os_error() {
-                        if v == 1 {
+                        if v == 11 {
                             // EAGAIN
                             continue;
                         } else {
