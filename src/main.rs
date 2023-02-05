@@ -66,13 +66,8 @@ fn main() -> anyhow::Result<()> {
 
     // Spawn a thread to "sink" the payloads
     std::thread::spawn(move || {
-        while let Some(block) = r.recv() {
-            let now = Instant::now();
-            let mut sum = 0.0;
-            for pl in block.0.iter() {
-                sum += 1.0;
-            }
-            println!("{} - {}us", sum, now.elapsed().as_micros());
+        while r.recv().is_some() {
+            println!("new packet");
         }
     });
 
