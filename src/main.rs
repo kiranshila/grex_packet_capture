@@ -9,7 +9,7 @@ use thingbuf::{mpsc::with_recycle, Recycle};
 const UDP_PAYLOAD: usize = 8200;
 const WARMUP_PACKETS: usize = 1_000_000;
 const BACKLOG_BUFFER_PAYLOADS: usize = 4096;
-const BLOCK_PAYLOAD_POW: u32 = 8;
+const BLOCK_PAYLOAD_POW: u32 = 15;
 const BLOCK_PAYLOADS: usize = 2usize.pow(BLOCK_PAYLOAD_POW);
 const BLOCKS_TO_SORT: usize = 512;
 
@@ -53,6 +53,12 @@ async fn main() -> anyhow::Result<()> {
 
     // Create the channel to bench the copies
     let (s, r) = with_recycle(4, PayloadRecycle::new());
+
+    // Get the allocs out of the way to warm up the channel
+    for _ in 0..4 {
+        s.send_ref().await?;
+        r.recv_ref().await;
+    }
 
     // Spawn a task to "sink" the payloads
     tokio::spawn(async move { while r.recv_ref().await.is_some() {} });
