@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use thingbuf::{mpsc::blocking::with_recycle, Recycle};
 
 const UDP_PAYLOAD: usize = 8200;
-const WARMUP_PACKETS: usize = 1_000_000;
+const WARMUP_PACKETS: usize = 1024; // If the receive buffer is only 256 MB, this should be plenty
 const BACKLOG_BUFFER_PAYLOADS: usize = 4096;
 const BLOCK_PAYLOAD_POW: u32 = 15;
 const BLOCK_PAYLOADS: usize = 2usize.pow(BLOCK_PAYLOAD_POW);
