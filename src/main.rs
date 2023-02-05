@@ -1,10 +1,11 @@
+mod capture;
+
+use crate::capture::Capture;
 use anyhow::bail;
 use core_affinity::CoreId;
-use socket2::{Domain, Socket, Type};
 use std::{
     collections::HashMap,
     mem::MaybeUninit,
-    net::SocketAddr,
     time::{Duration, Instant},
 };
 use thingbuf::{mpsc::with_recycle, Recycle};
@@ -63,18 +64,9 @@ async fn main() -> anyhow::Result<()> {
     if !core_affinity::set_for_current(CoreId { id: 8 }) {
         bail!("Couldn't set core affinity");
     }
-    // Create UDP socket
-    let socket = Socket::new(Domain::IPV4, Type::DGRAM, None)?;
-    // Bind our listening address
-    let address: SocketAddr = "0.0.0.0:60000".parse().unwrap();
-    socket.bind(&address.into())?;
-    // Reuse local address without timeout
-    socket.reuse_address()?;
-    // Set the buffer size to 256 MB (as was done in STARE2)
-    let sock_buf_size = 256 * 1024 * 1024;
-    socket.set_recv_buffer_size(sock_buf_size)?;
-    // Set to nonblocking
-    socket.set_nonblocking(true)?;
+
+    // Create the socket
+    let cap = Capture::new(60000)?;
 
     // Create some state
     let mut buffer = [0u8; UDP_PAYLOAD];
@@ -88,12 +80,9 @@ async fn main() -> anyhow::Result<()> {
     // Spawn a task to "sink" the payloads
     tokio::spawn(async move { while r.recv_ref().await.is_some() {} });
 
-    // Replace the socket2 socket with a tokio socket
-    let socket = UdpSocket::from_std(socket.into()).unwrap();
-
     // "Warm up" by capturing a ton of packets
     for _ in 0..WARMUP_PACKETS {
-        capture(&socket, &mut buffer).await?;
+        capture(&cap.sock, &mut buffer).await?;
     }
 
     let mut first_payload = true;
@@ -113,7 +102,7 @@ async fn main() -> anyhow::Result<()> {
             // ----- CAPTURE
 
             // Capture an arbitrary payload
-            capture(&socket, &mut buffer).await?;
+            capture(&cap.sock, &mut buffer).await?;
 
             // Time starts now to benchmark processing perf
             let now = Instant::now();
