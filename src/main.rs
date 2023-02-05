@@ -2,7 +2,7 @@ use anyhow::bail;
 use core_affinity::CoreId;
 use socket2::{Domain, Socket, Type};
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::HashMap,
     mem::MaybeUninit,
     net::SocketAddr,
     time::{Duration, Instant},
@@ -186,8 +186,6 @@ async fn main() -> anyhow::Result<()> {
             block_process_time.as_micros()
         );
     }
-    // Drop the channel to close it (I think this happens anyway due to lexical scoping rules)
-    drop(s);
 
     println!("Dropped {drops} packets while processing {processed} packets.");
     println!(
