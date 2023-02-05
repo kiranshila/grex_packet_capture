@@ -3,6 +3,7 @@ mod capture;
 use crate::capture::Capture;
 use anyhow::bail;
 use core_affinity::CoreId;
+use rayon::prelude::*;
 use std::time::{Duration, Instant};
 use thingbuf::{mpsc::blocking::with_recycle, Recycle};
 
@@ -66,9 +67,7 @@ fn main() -> anyhow::Result<()> {
     // Spawn a thread to "sink" the payloads
     std::thread::spawn(move || {
         core_affinity::set_for_current(CoreId { id: 9 });
-        while let Some(r) = r.recv_ref() {
-            println!("new packet with len {}", r.0.len());
-        }
+        while r.recv().is_some() {}
     });
 
     // "Warm up" by capturing a ton of packets
