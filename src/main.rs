@@ -1,6 +1,5 @@
 use anyhow::bail;
 use core_affinity::CoreId;
-use libc::EAGAIN;
 use socket2::{Domain, Socket, Type};
 use std::{
     collections::{HashMap, VecDeque},
@@ -8,7 +7,8 @@ use std::{
     net::SocketAddr,
     time::{Duration, Instant},
 };
-use thingbuf::{mpsc::blocking::with_recycle, Recycle};
+use thingbuf::{mpsc::with_recycle, Recycle};
+use tokio::net::UdpSocket;
 
 const UDP_PAYLOAD: usize = 8200;
 const WARMUP_PACKETS: usize = 1_000_000;
@@ -17,45 +17,10 @@ const BLOCK_PAYLOAD_POW: u32 = 15;
 const BLOCK_PAYLOADS: usize = 2usize.pow(BLOCK_PAYLOAD_POW);
 const BLOCKS_TO_SORT: usize = 512;
 
-fn clear_buffered_packets(
-    sock: &Socket,
-    packet_buffer: &mut [MaybeUninit<u8>],
-) -> anyhow::Result<usize> {
-    let mut bytes_cleared = 0;
-    loop {
-        match sock.recv_from(packet_buffer) {
-            Ok((size, _)) => bytes_cleared += size,
-            Err(e) => {
-                if let Some(os) = e.raw_os_error() {
-                    if os != EAGAIN {
-                        return Err(e.into());
-                    }
-                }
-                break;
-            }
-        }
-    }
-    Ok(bytes_cleared)
-}
-
-fn capture(sock: &Socket, packet_buffer: &mut [MaybeUninit<u8>]) -> anyhow::Result<()> {
-    loop {
-        match sock.recv_from(packet_buffer) {
-            Ok((size, _)) => {
-                if size == UDP_PAYLOAD {
-                    // Buffer now contains valid data
-                    break;
-                }
-            }
-            Err(e) => {
-                if let Some(os) = e.raw_os_error() {
-                    if os != EAGAIN {
-                        return Err(e.into());
-                    }
-                }
-            }
-        }
-        std::hint::spin_loop();
+async fn capture(sock: &UdpSocket, buf: &mut [u8]) -> anyhow::Result<()> {
+    let n = sock.recv(buf).await?;
+    if n != buf.len() {
+        bail!("Wong size");
     }
     Ok(())
 }
@@ -138,7 +103,8 @@ impl Recycle<PayloadBlock> for PayloadRecycle {
     }
 }
 
-fn main() -> anyhow::Result<()> {
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> anyhow::Result<()> {
     // Bind this thread to a core that shares a NUMA node with the NIC
     if !core_affinity::set_for_current(CoreId { id: 8 }) {
         bail!("Couldn't set core affinity");
@@ -157,7 +123,7 @@ fn main() -> anyhow::Result<()> {
     socket.set_nonblocking(true)?;
 
     // Create some state
-    let mut buffer = [MaybeUninit::zeroed(); UDP_PAYLOAD];
+    let mut buffer = [0u8; UDP_PAYLOAD];
     let mut rb = ReorderBuffer::new(BACKLOG_BUFFER_PAYLOADS);
     // Sneaky bit manipulation (all bits to 1 to set that the index corresponding with *that bit* needs to be filled)
     let mut to_fill = BLOCK_PAYLOADS - 1;
@@ -165,24 +131,15 @@ fn main() -> anyhow::Result<()> {
     // Create the channel to bench the copies
     let (s, r) = with_recycle(4, PayloadRecycle::new());
 
-    // Spawn a thread to "sink" the payloads
-    let handle = std::thread::Builder::new()
-        .name("sink".to_string())
-        .spawn(move || {
-            // Pin to the next core on the numa node
-            if !core_affinity::set_for_current(CoreId { id: 9 }) {
-                panic!("Couldn't set core affinity");
-            }
-            while r.recv_ref().is_some() {}
-        })
-        .unwrap();
+    // Spawn a task to "sink" the payloads
+    tokio::spawn(async move { while r.recv_ref().await.is_some() {} });
 
-    // Clear buffered packets
-    clear_buffered_packets(&socket, &mut buffer)?;
+    // Replace the socket2 socket with a tokio socket
+    let socket = UdpSocket::from_std(socket.into()).unwrap();
 
     // "Warm up" by capturing a ton of packets
     for _ in 0..WARMUP_PACKETS {
-        capture(&socket, &mut buffer)?;
+        capture(&socket, &mut buffer).await?;
     }
 
     let mut first_payload = true;
@@ -193,7 +150,7 @@ fn main() -> anyhow::Result<()> {
     // Sort N blocks, printing dropped packets
     for _ in 0..BLOCKS_TO_SORT {
         // First block to grab a reference to the next slot in the queue
-        let mut slot = s.send_ref().unwrap();
+        let mut slot = s.send_ref().await.unwrap();
 
         // Create a timer for average block processing
         let mut time = Duration::default();
@@ -202,13 +159,12 @@ fn main() -> anyhow::Result<()> {
             // ----- CAPTURE
 
             // Capture an arbitrary payload
-            capture(&socket, &mut buffer)?;
+            capture(&socket, &mut buffer).await?;
 
             // Time starts now to benchmark processing perf
             let now = Instant::now();
 
-            // Safety: buffer is now init, otherwise capture would have failed
-            let pl = Payload(unsafe { std::mem::transmute(buffer) });
+            let pl = Payload(buffer);
             // Decode its count
             let count = pl.count();
             if first_payload {
@@ -272,9 +228,6 @@ fn main() -> anyhow::Result<()> {
     }
     // Drop the channel to close it (I think this happens anyway due to lexical scoping rules)
     drop(s);
-
-    // Join the sink
-    handle.join().unwrap();
 
     println!("Dropped {drops} packets while processing {processed} packets.");
     println!(
