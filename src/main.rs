@@ -19,7 +19,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Create our capture
-    let mut cap = Box::new(Capture::new(60000)?);
+    let mut cap = Capture::new(60000)?;
 
     // Create the channel to bench the copies
     let (s, r) = with_recycle(4, PayloadRecycle::new());
