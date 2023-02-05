@@ -6,7 +6,7 @@ use core_affinity::CoreId;
 use thingbuf::mpsc::with_recycle;
 
 const WARMUP_PACKETS: usize = 1_000_000;
-const BLOCKS_TO_SORT: usize = 512;
+const BLOCKS_TO_SORT: usize = 10;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
