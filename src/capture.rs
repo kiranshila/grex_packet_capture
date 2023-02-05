@@ -123,20 +123,20 @@ impl Capture {
         // Start the block timer
         let block_time = Instant::now();
         // Once we've captured a packet for each spot in the buffer, fill in the missing spots
-        for (idx, buf) in block_buffer.0.iter_mut().enumerate() {
-            // Check if this bit needs to be filled
-            if (to_fill >> idx) & 1 == 1 {
-                // Then either fill with data from the past, or set it as default
-                let count = idx as u64 + self.oldest_count;
-                if let Some(pl) = self.backlog.remove(&count) {
-                    buf.write(pl);
-                    self.processed += 1;
-                } else {
-                    buf.write(PayloadBytes::default());
-                    self.drops += 1;
-                }
-            }
-        }
+        // for (idx, buf) in block_buffer.0.iter_mut().enumerate() {
+        //     // Check if this bit needs to be filled
+        //     if (to_fill >> idx) & 1 == 1 {
+        //         // Then either fill with data from the past, or set it as default
+        //         let count = idx as u64 + self.oldest_count;
+        //         if let Some(pl) = self.backlog.remove(&count) {
+        //             buf.write(pl);
+        //             self.processed += 1;
+        //         } else {
+        //             buf.write(PayloadBytes::default());
+        //             self.drops += 1;
+        //         }
+        //     }
+        // }
         // Move our oldest count ahead by the block size
         self.oldest_count += block_buffer.0.len() as u64;
         Ok((
