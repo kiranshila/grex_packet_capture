@@ -66,8 +66,12 @@ fn main() -> anyhow::Result<()> {
 
     // Spawn a thread to "sink" the payloads
     std::thread::spawn(move || {
-        while let Some(v) = r.recv_ref() {
-            println!("Got payload {}", v.0.len());
+        while let Some(block) = r.recv_ref() {
+            let mut sum = 0.0;
+            for pl in block.0.iter() {
+                sum += pl.iter().fold(0.0, |x, y| x + *y as f32);
+            }
+            println!("{}", sum);
         }
     });
 
