@@ -68,8 +68,8 @@ fn main() -> anyhow::Result<()> {
     std::thread::spawn(move || {
         while let Some(block) = r.recv() {
             let mut sum = 0.0;
-            for pl in block.0.iter() {
-                sum += pl.iter().fold(0.0, |x, y| x + *y as f32);
+            for pl in block.0.into_iter() {
+                sum += pl.into_iter().fold(0.0, |x, y| x + y as f32);
             }
             println!("{}", sum);
         }
@@ -162,7 +162,7 @@ fn main() -> anyhow::Result<()> {
             "Processing - {} us per packet\tBlock - {} us - Backlog {}",
             time.as_micros() as f32 / BLOCK_PAYLOADS as f32,
             block_process_time.as_micros(),
-            cap.backlog.len()
+            cap.backlog.len(),
         );
     }
 
