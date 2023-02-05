@@ -56,11 +56,17 @@ async fn main() -> anyhow::Result<()> {
     // Create the socket
     let mut cap = Capture::new(60000)?;
 
-    // Sneaky bit manipulation (all bits to 1 to set that the index corresponding with *that bit* needs to be filled)
-    let mut to_fill = BLOCK_PAYLOADS - 1;
-
     // Create the channel to bench the copies
     let (s, r) = with_recycle(4, PayloadRecycle::new());
+
+    // Preallocate the buffer with non-uninit values
+    for _ in 0..4 {
+        s.send_ref().await?;
+        r.recv_ref().await;
+    }
+
+    // Sneaky bit manipulation (all bits to 1 to set that the index corresponding with *that bit* needs to be filled)
+    let mut to_fill = BLOCK_PAYLOADS - 1;
 
     // Spawn a task to "sink" the payloads
     tokio::spawn(async move { while r.recv_ref().await.is_some() {} });
