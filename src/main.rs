@@ -172,7 +172,9 @@ fn main() -> anyhow::Result<()> {
             panic!("Couldn't set core affinity");
         }
         loop {
-            r.recv().unwrap();
+            if r.recv().is_none() {
+                break;
+            }
         }
     });
 
