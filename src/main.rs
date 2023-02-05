@@ -73,13 +73,7 @@ async fn main() -> anyhow::Result<()> {
     // Spawn a thread to "sink" the payloads
     std::thread::spawn(move || loop {
         match r.try_recv_ref() {
-            Ok(v) => {
-                let mut big_sum = 0.0;
-                for payload in v.0.iter() {
-                    big_sum += payload.iter().fold(0.0, |x, b| x + *b as f32);
-                }
-                //println!("{}", big_sum);
-            }
+            Ok(_) => (),
             Err(e) => match e {
                 thingbuf::mpsc::errors::TryRecvError::Empty => spin_loop(),
                 thingbuf::mpsc::errors::TryRecvError::Closed => return,
