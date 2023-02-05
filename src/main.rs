@@ -171,11 +171,7 @@ fn main() -> anyhow::Result<()> {
         if !core_affinity::set_for_current(CoreId { id: 9 }) {
             panic!("Couldn't set core affinity");
         }
-        loop {
-            if r.recv().is_none() {
-                break;
-            }
-        }
+        while r.recv().is_some() {}
     });
 
     // Clear buffered packets
