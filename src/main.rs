@@ -65,7 +65,11 @@ fn main() -> anyhow::Result<()> {
     let mut to_fill = BLOCK_PAYLOADS - 1;
 
     // Spawn a thread to "sink" the payloads
-    std::thread::spawn(move || while r.recv_ref().is_some() {});
+    std::thread::spawn(move || {
+        while let Some(v) = r.recv_ref() {
+            println!("Got payload {}", v.0.len());
+        }
+    });
 
     // "Warm up" by capturing a ton of packets
     for _ in 0..WARMUP_PACKETS {
