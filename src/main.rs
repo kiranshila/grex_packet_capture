@@ -39,9 +39,6 @@ impl Recycle<PayloadBlock> for PayloadRecycle {
 }
 
 fn main() -> anyhow::Result<()> {
-    // Setup the monitoring
-    console_subscriber::init();
-
     // Bind this thread to a core that shares a NUMA node with the NIC
     if !core_affinity::set_for_current(CoreId { id: 8 }) {
         bail!("Couldn't set core affinity");
