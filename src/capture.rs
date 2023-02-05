@@ -1,5 +1,4 @@
 use socket2::{Domain, Socket, Type};
-use std::hint::spin_loop;
 use std::net::UdpSocket;
 use std::{
     collections::HashMap,
@@ -31,8 +30,8 @@ impl Capture {
         socket.bind(&address.into())?;
         // Reuse local address without timeout
         socket.reuse_address()?;
-        // Set the buffer size to 256 MB (as was done in STARE2)
-        let sock_buf_size = 256 * 1024 * 1024;
+        // Set the buffer size to 1GB
+        let sock_buf_size = 256 * 1024 * 1024 * 4;
         socket.set_recv_buffer_size(sock_buf_size)?;
         // Set to nonblocking
         socket.set_nonblocking(true)?;
@@ -54,7 +53,11 @@ impl Capture {
                         if v == 1 {
                             // EAGAIN
                             continue;
+                        } else {
+                            return Err(e.into());
                         }
+                    } else {
+                        return Err(e.into());
                     }
                 }
             }
