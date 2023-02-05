@@ -183,7 +183,7 @@ fn main() -> anyhow::Result<()> {
                     break;
                 }
             } else {
-                spin_loop();
+                std::thread::yield_now();
             }
         }
     });
@@ -209,7 +209,7 @@ fn main() -> anyhow::Result<()> {
                 Ok(slot) => {
                     break slot;
                 }
-                Err(_) => spin_loop(),
+                Err(_) => std::thread::yield_now(),
             }
         };
 
