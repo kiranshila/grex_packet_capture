@@ -13,8 +13,8 @@ use crate::{Count, Payload, BACKLOG_BUFFER_PAYLOADS, UDP_PAYLOAD};
 pub enum Error {
     #[error("We recieved a payload which wasn't the size we expected {0}")]
     SizeMismatch(usize),
-    #[error("Failed to set the recv buffer size. Check sysctl net.core.rmem_max")]
-    SetRecvBufferSizeFailed,
+    #[error("Failed to set the recv buffer size. We tried to set {expected}, but found {found}. Check sysctl net.core.rmem_max")]
+    SetRecvBufferSizeFailed { expected: usize, found: usize },
 }
 
 pub struct Capture {
@@ -36,8 +36,13 @@ impl Capture {
         let sock_buf_size = 256 * 1024 * 1024;
         socket.set_recv_buffer_size(sock_buf_size)?;
         // Check
-        if socket.recv_buffer_size()? != sock_buf_size {
-            return Err(Error::SetRecvBufferSizeFailed.into());
+        let current_buf_size = socket.recv_buffer_size()?;
+        if current_buf_size != sock_buf_size {
+            return Err(Error::SetRecvBufferSizeFailed {
+                expected: sock_buf_size,
+                found: current_buf_size,
+            }
+            .into());
         }
         // Set to nonblocking
         socket.set_nonblocking(true)?;
