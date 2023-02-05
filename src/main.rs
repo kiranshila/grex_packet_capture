@@ -1,5 +1,4 @@
 use anyhow::bail;
-use bit_vec::BitVec;
 use core_affinity::CoreId;
 use libc::EAGAIN;
 use socket2::{Domain, Socket, Type};
@@ -16,7 +15,8 @@ use thingbuf::{Recycle, ThingBuf};
 const UDP_PAYLOAD: usize = 8200;
 const WARMUP_PACKETS: usize = 1_000_000;
 const BACKLOG_BUFFER_PAYLOADS: usize = 1024;
-const BLOCK_PAYLOADS: usize = 32_768;
+const BLOCK_PAYLOAD_POW: u32 = 15;
+const BLOCK_PAYLOADS: usize = 2usize.pow(BLOCK_PAYLOAD_POW);
 const BLOCKS_TO_SORT: usize = 512;
 
 fn clear_buffered_packets(
@@ -161,7 +161,8 @@ fn main() -> anyhow::Result<()> {
     // Create some state
     let mut buffer = [MaybeUninit::zeroed(); UDP_PAYLOAD];
     let mut rb = ReorderBuffer::new(BACKLOG_BUFFER_PAYLOADS);
-    let mut to_fill = BitVec::from_elem(BLOCK_PAYLOADS, true);
+    // Sneaky bit manipulation (all bits to 1 to set that the index corresponding with *that bit* needs to be filled)
+    let mut to_fill = BLOCK_PAYLOADS - 1;
 
     // Create the channel to bench the copies
     let source_buf = Arc::new(ThingBuf::with_recycle(4, PayloadRecycle::new()));
@@ -246,7 +247,7 @@ fn main() -> anyhow::Result<()> {
             } else {
                 let idx = (count - oldest_count) as usize;
                 // Remove this idx from the `to_fill` entry
-                to_fill.set(idx, false);
+                to_fill &= !(1 << idx);
                 // Packet is for this block! Insert into it's position
                 slot.0[idx].write(pl);
                 processed += 1;
@@ -258,18 +259,24 @@ fn main() -> anyhow::Result<()> {
         // Now we'll fill in gaps with past data, if we have it
         // Otherwise replace with zeros and increment the drop count
         let block_process = Instant::now();
-        for (idx, _) in to_fill.iter().enumerate().filter(|(_, fill)| *fill) {
-            let count = idx as u64 + oldest_count;
-            if let Some(pl) = rb.remove(&count) {
-                slot.0[idx].write(pl);
-                processed += 1;
-            } else {
-                slot.0[idx].write(Payload::default());
-                drops += 1;
+
+        for (idx, buf) in slot.0.iter_mut().enumerate() {
+            // Check if this bit needs to be filled
+            if (to_fill >> idx) & 1 == 1 {
+                // Then either fill with data from the past, or set it as default
+                let count = idx as u64 + oldest_count;
+                if let Some(pl) = rb.remove(&count) {
+                    buf.write(pl);
+                    processed += 1;
+                } else {
+                    buf.write(Payload::default());
+                    drops += 1;
+                }
             }
         }
+
         // Then reset to_fill
-        to_fill.set_all();
+        to_fill = BLOCK_PAYLOADS - 1;
         // Move the oldest count forward by the block size
         oldest_count += slot.0.len() as u64;
         let block_process_time = block_process.elapsed();
