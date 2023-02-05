@@ -67,8 +67,7 @@ impl ReorderBuffer {
         let count = payload.count();
         self.backlog_idxs.insert(count, idx);
         // Memcpy into buffer
-        // Safety: These indicies are correct by construction
-        *unsafe { self.buffer.get_unchecked_mut(idx) } = payload;
+        self.buffer[idx] = payload;
         Ok(())
     }
     fn remove(&mut self, count: &Count) -> Option<Payload> {
@@ -77,8 +76,7 @@ impl ReorderBuffer {
         // Recycle the index
         self.free_idxs.push_back(idx);
         // Return the data
-        // Safety: These indicies are correct by construction
-        Some(*unsafe { self.buffer.get_unchecked(idx) })
+        Some(self.buffer[idx])
     }
 }
 
@@ -188,7 +186,7 @@ async fn main() -> anyhow::Result<()> {
                 to_fill &= !(1 << idx);
                 // Packet is for this block! Insert into it's position
                 // Safety: the index is correct by construction as count-oldest_count will always be inbounds
-                unsafe { slot.0.get_unchecked_mut(idx) }.write(pl);
+                slot.0[idx].write(pl);
                 processed += 1;
             }
 
