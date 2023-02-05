@@ -68,12 +68,13 @@ impl Capture {
         &mut self,
         mut block_slot: SendRef<'_, PayloadBlock>,
     ) -> anyhow::Result<(Duration, Duration)> {
+        let block_size = block_slot.0.len();
         // Sneaky bit manipulation (all bits to 1 to set that the index corresponding with *that bit* needs to be filled)
-        let mut to_fill = block_slot.0.len() - 1;
+        let mut to_fill = block_size - 1;
         // Create a timer for average block processing
         let mut packet_time = Duration::default();
         // Iterate through every payload in this block
-        for _ in 0..block_slot.0.len() {
+        for _ in 0..block_size {
             // ----- CAPTURE
             // Capture the next payload
             if let Err(e) = self.capture().await {
@@ -98,7 +99,7 @@ impl Capture {
             if count < self.oldest_count {
                 // Drop this payload, it happened in the past
                 self.drops += 1;
-            } else if count >= self.oldest_count + block_slot.0.len() as u64 {
+            } else if count >= self.oldest_count + block_size as u64 {
                 // Packet is destined for the future, insert into reorder buf
                 self.backlog.insert(count, self.buffer);
             } else {
@@ -116,24 +117,24 @@ impl Capture {
         // Now we'll fill in gaps with past data, if we have it
         // Otherwise replace with zeros and increment the drop count
         let block_process = Instant::now();
-        for (idx, buf) in block_slot.0.iter_mut().enumerate() {
-            // Check if this bit needs to be filled
-            if (to_fill >> idx) & 1 == 1 {
-                // Then either fill with data from the past, or set it as default
-                let count = idx as u64 + self.oldest_count;
-                if let Some(pl) = self.backlog.remove(&count) {
-                    buf.write(pl);
-                    self.processed += 1;
-                } else {
-                    let mut pl = [0u8; UDP_PAYLOAD];
-                    (pl[0..8]).clone_from_slice(&count.to_be_bytes());
-                    buf.write(pl);
-                    self.drops += 1;
-                }
-            }
-        }
+        // for (idx, buf) in block_slot.0.iter_mut().enumerate() {
+        //     // Check if this bit needs to be filled
+        //     if (to_fill >> idx) & 1 == 1 {
+        //         // Then either fill with data from the past, or set it as default
+        //         let count = idx as u64 + self.oldest_count;
+        //         if let Some(pl) = self.backlog.remove(&count) {
+        //             buf.write(pl);
+        //             self.processed += 1;
+        //         } else {
+        //             let mut pl = [0u8; UDP_PAYLOAD];
+        //             (pl[0..8]).clone_from_slice(&count.to_be_bytes());
+        //             buf.write(pl);
+        //             self.drops += 1;
+        //         }
+        //     }
+        // }
         // Move the oldest count forward by the block size
-        self.oldest_count += block_slot.0.len() as u64;
+        self.oldest_count += block_size as u64;
         let block_process_time = block_process.elapsed();
         // Return timing info
         Ok((packet_time, block_process_time))
