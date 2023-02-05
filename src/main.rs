@@ -273,9 +273,9 @@ fn main() -> anyhow::Result<()> {
         // At this point, we'd send the "sorted" block to the next stage by dropping slot
         // Print timing info
         println!(
-            "Processing {BLOCK_PAYLOADS} packets took {} seconds, or {} per packet",
-            time.as_secs(),
-            time.as_secs_f32() / BLOCK_PAYLOADS as f32
+            "Processing {BLOCK_PAYLOADS} packets took {} us, or {} us per packet",
+            time.as_micros(),
+            time.as_micros() as f32 / BLOCK_PAYLOADS as f32
         );
     }
 
