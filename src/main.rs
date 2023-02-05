@@ -12,6 +12,7 @@ const BACKLOG_BUFFER_PAYLOADS: usize = 4096;
 const BLOCK_PAYLOAD_POW: u32 = 15;
 const BLOCK_PAYLOADS: usize = 2usize.pow(BLOCK_PAYLOAD_POW);
 const BLOCKS_TO_SORT: usize = 512;
+const RING_BLOCKS: usize = 4;
 
 type Count = u64;
 
@@ -57,10 +58,10 @@ async fn main() -> anyhow::Result<()> {
     let mut cap = Capture::new(60000)?;
 
     // Create the channel to bench the copies
-    let (s, r) = with_recycle(4, PayloadRecycle::new());
+    let (s, r) = with_recycle(RING_BLOCKS, PayloadRecycle::new());
 
     // Preallocate the buffer with non-uninit values
-    for _ in 0..4 {
+    for _ in 0..RING_BLOCKS {
         s.send_ref().await?;
         r.recv_ref().await;
     }
@@ -155,9 +156,10 @@ async fn main() -> anyhow::Result<()> {
         // At this point, we'd send the "sorted" block to the next stage by dropping slot
         // Print timing info
         println!(
-            "Processing - {} us per packet\tBlock - {} us",
+            "Processing - {} us per packet\tBlock - {} us - Backlog {}",
             time.as_micros() as f32 / BLOCK_PAYLOADS as f32,
-            block_process_time.as_micros()
+            block_process_time.as_micros(),
+            cap.backlog.len()
         );
     }
 
