@@ -12,7 +12,7 @@ const BACKLOG_BUFFER_PAYLOADS: usize = 4096;
 const BLOCK_PAYLOAD_POW: u32 = 15;
 const BLOCK_PAYLOADS: usize = 2usize.pow(BLOCK_PAYLOAD_POW);
 const BLOCKS_TO_SORT: usize = 512;
-const RING_BLOCKS: usize = 8;
+const RING_BLOCKS: usize = 4;
 
 type Count = u64;
 
@@ -38,7 +38,7 @@ impl Recycle<PayloadBlock> for PayloadRecycle {
     }
 
     fn recycle(&self, _: &mut PayloadBlock) {
-        // Do nothing, we have to be careful about uninit
+        // Do nothing, we will write to every position anyway
     }
 }
 
