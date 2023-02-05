@@ -4,6 +4,7 @@ use crate::capture::Capture;
 use anyhow::bail;
 use core_affinity::CoreId;
 use std::hint::spin_loop;
+use std::thread::yield_now;
 use std::time::{Duration, Instant};
 use thingbuf::{mpsc::with_recycle, Recycle};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -75,7 +76,7 @@ async fn main() -> anyhow::Result<()> {
         match r.try_recv_ref() {
             Ok(_) => (),
             Err(e) => match e {
-                thingbuf::mpsc::errors::TryRecvError::Empty => spin_loop(),
+                thingbuf::mpsc::errors::TryRecvError::Empty => yield_now(),
                 thingbuf::mpsc::errors::TryRecvError::Closed => return,
                 _ => unreachable!(),
             },
