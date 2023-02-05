@@ -70,7 +70,7 @@ fn main() -> anyhow::Result<()> {
             let now = Instant::now();
             let mut sum = 0.0;
             for pl in block.0.iter() {
-                sum += pl.iter().fold(0.0, |x, y| x + *y as f32);
+                sum += 1.0;
             }
             println!("{} - {}us", sum, now.elapsed().as_micros());
         }
