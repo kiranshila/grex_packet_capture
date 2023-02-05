@@ -13,6 +13,8 @@ use crate::{Count, Payload, BACKLOG_BUFFER_PAYLOADS, UDP_PAYLOAD};
 pub enum Error {
     #[error("We recieved a payload which wasn't the size we expected {0}")]
     SizeMismatch(usize),
+    #[error("Failed to set the recv buffer size. Check sysctl net.core.rmem_max")]
+    SetRecvBufferSizeFailed,
 }
 
 pub struct Capture {
@@ -30,11 +32,13 @@ impl Capture {
         socket.bind(&address.into())?;
         // Reuse local address without timeout
         socket.reuse_address()?;
-        // Set the buffer size to 1GB
-        let sock_buf_size = 256 * 1024 * 1024 * 4;
+        // Set the buffer size to 256MB
+        let sock_buf_size = 256 * 1024 * 1024;
         socket.set_recv_buffer_size(sock_buf_size)?;
         // Check
-        println!("{}", socket.recv_buffer_size()?);
+        if socket.recv_buffer_size()? != sock_buf_size {
+            return Err(Error::SetRecvBufferSizeFailed.into());
+        }
         // Set to nonblocking
         socket.set_nonblocking(true)?;
         // Replace the socket2 socket with a tokio socket
