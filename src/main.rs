@@ -3,11 +3,7 @@ mod capture;
 use crate::capture::Capture;
 use anyhow::bail;
 use core_affinity::CoreId;
-use std::{
-    collections::HashMap,
-    mem::MaybeUninit,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 use thingbuf::{mpsc::with_recycle, Recycle};
 
 const UDP_PAYLOAD: usize = 8200;
@@ -26,7 +22,7 @@ fn count(pl: &Payload) -> Count {
 }
 
 #[derive(Clone)]
-pub struct PayloadBlock([MaybeUninit<Payload>; BLOCK_PAYLOADS]);
+pub struct PayloadBlock([Payload; BLOCK_PAYLOADS]);
 
 pub struct PayloadRecycle;
 
@@ -38,7 +34,7 @@ impl PayloadRecycle {
 
 impl Recycle<PayloadBlock> for PayloadRecycle {
     fn new_element(&self) -> PayloadBlock {
-        PayloadBlock([MaybeUninit::uninit(); BLOCK_PAYLOADS])
+        PayloadBlock([[0u8; UDP_PAYLOAD]; BLOCK_PAYLOADS])
     }
 
     fn recycle(&self, _: &mut PayloadBlock) {
@@ -116,8 +112,7 @@ async fn main() -> anyhow::Result<()> {
                 // Remove this idx from the `to_fill` entry
                 to_fill &= !(1 << idx);
                 // Packet is for this block! Insert into it's position
-                // Safety: the index is correct by construction as count-oldest_count will always be inbounds
-                slot.0[idx].write(cap.buffer);
+                slot.0[idx] = cap.buffer;
                 processed += 1;
             }
 
@@ -134,12 +129,12 @@ async fn main() -> anyhow::Result<()> {
                 // Then either fill with data from the past, or set it as default
                 let count = idx as u64 + oldest_count;
                 if let Some(pl) = cap.backlog.remove(&count) {
-                    buf.write(pl);
+                    buf.clone_from_slice(&pl);
                     processed += 1;
                 } else {
                     let mut pl = [0u8; UDP_PAYLOAD];
                     (pl[0..8]).clone_from_slice(&count.to_be_bytes());
-                    buf.write(pl);
+                    buf.clone_from_slice(&pl);
                     drops += 1;
                 }
             }
