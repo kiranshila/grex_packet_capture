@@ -66,7 +66,11 @@ fn main() -> anyhow::Result<()> {
     // Spawn a thread to "sink" the payloads
     std::thread::spawn(move || {
         core_affinity::set_for_current(CoreId { id: 9 });
-        while let Some(block) = r.recv() {
+        // Create a "static" buffer for this thread so we don't alloc
+        let mut current_block = Box::new([[0u8; UDP_PAYLOAD]; BLOCK_PAYLOADS]);
+        while let Some(block) = r.recv_ref() {
+            // Copy into thread memory and drop
+            current_block.clone_from(&block);
             let counts: Vec<_> = block.iter().map(count).collect();
             println!(
                 "Min - {}, Max - {}",
