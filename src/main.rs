@@ -65,10 +65,8 @@ async fn main() -> anyhow::Result<()> {
     // Sort N blocks, printing dropped packets
     for _ in 0..BLOCKS_TO_SORT {
         // First block to grab a reference to the next slot in the queue
-        let mut slot = s.send_ref().await.unwrap();
-
-        let (p, b) = cap.next_block(&mut slot.0).await?;
-
+        let slot = s.send_ref().await.unwrap();
+        let (p, b) = cap.next_block(slot).await?;
         // Print timing info
         println!(
             "Processing - {} us per packet\tBlock - {} us",
