@@ -65,8 +65,8 @@ fn main() -> anyhow::Result<()> {
 
     // Spawn a thread to "sink" the payloads
     std::thread::spawn(move || {
-        while r.recv_ref().is_some() {
-            println!("new packet");
+        while let Some(r) = r.recv_ref() {
+            println!("new packet with len {}", r.0.len());
         }
     });
 
