@@ -14,6 +14,11 @@ const BLOCK_PAYLOADS: usize = 2usize.pow(BLOCK_PAYLOAD_POW);
 const BLOCKS_TO_SORT: usize = 512;
 const RING_BLOCKS: usize = 8;
 
+// Use jemalloc
+use tikv_jemallocator::Jemalloc;
+#[global_allocator]
+static GLOBAL: Jemalloc = Jemalloc;
+
 type Count = u64;
 
 pub type Payload = [u8; UDP_PAYLOAD];
