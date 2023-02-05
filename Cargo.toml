@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.68"
+bytes = "1.4.0"
 console-subscriber = "0.1.8"
 core_affinity = "0.8.0"
 socket2 = "0.4.7"

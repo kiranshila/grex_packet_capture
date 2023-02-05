@@ -302,6 +302,7 @@ name = "grex_packet_capture"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bytes",
  "console-subscriber",
  "core_affinity",
  "socket2",

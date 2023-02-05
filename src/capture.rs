@@ -1,7 +1,7 @@
+use bytes::{Buf, Bytes, BytesMut};
 use socket2::{Domain, Socket, Type};
 use std::{
     collections::HashMap,
-    mem::MaybeUninit,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     time::{Duration, Instant},
 };
@@ -14,15 +14,13 @@ const BACKLOG_BUFFER_PAYLOADS: usize = 4096;
 const BLOCK_PAYLOAD_POW: u32 = 15;
 const BLOCK_PAYLOADS: usize = 2usize.pow(BLOCK_PAYLOAD_POW);
 
-pub type PayloadBytes = [u8; UDP_PAYLOAD];
-
 #[derive(Debug)]
 /// Capture object to grab observation data from the network card
 pub struct Capture {
     /// The socket fd itself
     sock: UdpSocket,
     /// A reusable container to capture into
-    buf: PayloadBytes,
+    buf: BytesMut,
     /// The oldest count for the current block
     oldest_count: Count,
     /// A flag to indicate if we've captured our first packet
@@ -32,7 +30,7 @@ pub struct Capture {
     /// The number of packets we've processed
     pub processed: usize,
     /// The hashmap that will store futuristic payloads
-    backlog: HashMap<Count, PayloadBytes>,
+    backlog: HashMap<Count, Bytes>,
 }
 
 impl Capture {
@@ -53,7 +51,7 @@ impl Capture {
         let sock = UdpSocket::from_std(socket.into())?;
         Ok(Self {
             sock,
-            buf: [0u8; UDP_PAYLOAD],
+            buf: BytesMut::with_capacity(UDP_PAYLOAD),
             oldest_count: 0,
             first_packet: false,
             backlog: HashMap::with_capacity(BACKLOG_BUFFER_PAYLOADS),
@@ -115,13 +113,14 @@ impl Capture {
                 self.drops += 1;
             } else if count >= self.oldest_count + block_buffer.0.len() as u64 {
                 // Packet is destined for the future, insert into reorder buf
-                self.backlog.insert(count, self.buf);
+                self.backlog
+                    .insert(count, self.buf.copy_to_bytes(UDP_PAYLOAD));
             } else {
                 let idx = (count - self.oldest_count) as usize;
                 // Remove this idx from the `to_fill` entry
                 to_fill &= !(1 << idx);
                 // Packet is for this block! Insert into it's position
-                block_buffer.0[idx].write(self.buf);
+                block_buffer.0[idx] = self.buf.copy_to_bytes(UDP_PAYLOAD);
                 self.processed += 1;
             }
             // Stop the packet timer
@@ -136,13 +135,13 @@ impl Capture {
                 // Then either fill with data from the past, or set it as default
                 let count = idx as u64 + self.oldest_count;
                 if let Some(pl) = self.backlog.remove(&count) {
-                    buf.write(pl);
+                    *buf = pl;
                     self.processed += 1;
                 } else {
                     // Create an empty payload with *this* count
-                    let mut dummy = [0u8; UDP_PAYLOAD];
+                    let mut dummy = vec![0u8; UDP_PAYLOAD];
                     dummy[0..8].clone_from_slice(&count.to_be_bytes());
-                    buf.write(dummy);
+                    *buf = Bytes::from(dummy);
                     self.drops += 1;
                 }
             }
@@ -174,7 +173,7 @@ fn count(payload: &[u8]) -> Count {
 /// A block of multiple payloads that we will pass around via channels.
 /// Data is MaybeUninit as it's not valid until it's populated from the capture task.
 /// After that point, it is assumed to be valid.
-pub struct PayloadBlock([MaybeUninit<PayloadBytes>; BLOCK_PAYLOADS]);
+pub struct PayloadBlock(Vec<Bytes>);
 
 /// Zero-size struct for our custom Recycle impl that does nothing on recycle to preserve the uninit and avoid allocating
 pub struct PayloadRecycle;
@@ -187,7 +186,7 @@ impl PayloadRecycle {
 
 impl Recycle<PayloadBlock> for PayloadRecycle {
     fn new_element(&self) -> PayloadBlock {
-        PayloadBlock([MaybeUninit::uninit(); BLOCK_PAYLOADS])
+        PayloadBlock(vec![Bytes::from(vec![0u8; UDP_PAYLOAD]); BLOCK_PAYLOADS])
     }
 
     fn recycle(&self, _: &mut PayloadBlock) {
