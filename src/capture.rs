@@ -3,6 +3,8 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use thiserror::Error;
 use tokio::net::UdpSocket;
 
+use crate::UDP_PAYLOAD;
+
 #[derive(Error, Debug)]
 /// Errors that can be produced from captures
 pub enum Error {
@@ -12,6 +14,7 @@ pub enum Error {
 
 pub struct Capture {
     pub sock: UdpSocket,
+    pub buffer: [u8; UDP_PAYLOAD],
 }
 
 impl Capture {
@@ -30,12 +33,15 @@ impl Capture {
         socket.set_nonblocking(true)?;
         // Replace the socket2 socket with a tokio socket
         let sock = UdpSocket::from_std(socket.into())?;
-        Ok(Self { sock })
+        Ok(Self {
+            sock,
+            buffer: [0u8; UDP_PAYLOAD],
+        })
     }
 
-    pub async fn capture(&mut self, buf: &mut [u8]) -> anyhow::Result<()> {
-        let n = self.sock.recv(buf).await?;
-        if n != buf.len() {
+    pub async fn capture(&mut self) -> anyhow::Result<()> {
+        let n = self.sock.recv(&mut self.buffer).await?;
+        if n != self.buffer.len() {
             Err(Error::SizeMismatch(n).into())
         } else {
             Ok(())

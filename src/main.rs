@@ -60,7 +60,6 @@ async fn main() -> anyhow::Result<()> {
     let mut cap = Capture::new(60000)?;
 
     // Create some state
-    let mut buffer = [0u8; UDP_PAYLOAD];
     let mut backlog = HashMap::with_capacity(BACKLOG_BUFFER_PAYLOADS);
     // Sneaky bit manipulation (all bits to 1 to set that the index corresponding with *that bit* needs to be filled)
     let mut to_fill = BLOCK_PAYLOADS - 1;
@@ -73,7 +72,7 @@ async fn main() -> anyhow::Result<()> {
 
     // "Warm up" by capturing a ton of packets
     for _ in 0..WARMUP_PACKETS {
-        cap.capture(&mut buffer).await?;
+        cap.capture().await?;
     }
 
     let mut first_payload = true;
@@ -93,13 +92,13 @@ async fn main() -> anyhow::Result<()> {
             // ----- CAPTURE
 
             // Capture an arbitrary payload
-            cap.capture(&mut buffer).await?;
+            cap.capture().await?;
 
             // Time starts now to benchmark processing perf
             let now = Instant::now();
 
             // Decode its count
-            let count = count(&buffer);
+            let count = count(&cap.buffer);
             if first_payload {
                 oldest_count = count;
                 first_payload = false;
@@ -113,14 +112,14 @@ async fn main() -> anyhow::Result<()> {
                 drops += 1;
             } else if count >= oldest_count + slot.0.len() as u64 {
                 // Packet is destined for the future, insert into reorder buf
-                backlog.insert(count, buffer);
+                backlog.insert(count, cap.buffer);
             } else {
                 let idx = (count - oldest_count) as usize;
                 // Remove this idx from the `to_fill` entry
                 to_fill &= !(1 << idx);
                 // Packet is for this block! Insert into it's position
                 // Safety: the index is correct by construction as count-oldest_count will always be inbounds
-                slot.0[idx].write(buffer);
+                slot.0[idx].write(cap.buffer);
                 processed += 1;
             }
 
