@@ -1,9 +1,12 @@
 use socket2::{Domain, Socket, Type};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::{
+    collections::HashMap,
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+};
 use thiserror::Error;
 use tokio::net::UdpSocket;
 
-use crate::UDP_PAYLOAD;
+use crate::{Count, Payload, BACKLOG_BUFFER_PAYLOADS, UDP_PAYLOAD};
 
 #[derive(Error, Debug)]
 /// Errors that can be produced from captures
@@ -14,7 +17,8 @@ pub enum Error {
 
 pub struct Capture {
     pub sock: UdpSocket,
-    pub buffer: [u8; UDP_PAYLOAD],
+    pub buffer: Payload,
+    pub backlog: HashMap<Count, Payload>,
 }
 
 impl Capture {
@@ -36,6 +40,7 @@ impl Capture {
         Ok(Self {
             sock,
             buffer: [0u8; UDP_PAYLOAD],
+            backlog: HashMap::with_capacity(BACKLOG_BUFFER_PAYLOADS),
         })
     }
 

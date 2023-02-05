@@ -59,8 +59,6 @@ async fn main() -> anyhow::Result<()> {
     // Create the socket
     let mut cap = Capture::new(60000)?;
 
-    // Create some state
-    let mut backlog = HashMap::with_capacity(BACKLOG_BUFFER_PAYLOADS);
     // Sneaky bit manipulation (all bits to 1 to set that the index corresponding with *that bit* needs to be filled)
     let mut to_fill = BLOCK_PAYLOADS - 1;
 
@@ -112,7 +110,7 @@ async fn main() -> anyhow::Result<()> {
                 drops += 1;
             } else if count >= oldest_count + slot.0.len() as u64 {
                 // Packet is destined for the future, insert into reorder buf
-                backlog.insert(count, cap.buffer);
+                cap.backlog.insert(count, cap.buffer);
             } else {
                 let idx = (count - oldest_count) as usize;
                 // Remove this idx from the `to_fill` entry
@@ -135,7 +133,7 @@ async fn main() -> anyhow::Result<()> {
             if (to_fill >> idx) & 1 == 1 {
                 // Then either fill with data from the past, or set it as default
                 let count = idx as u64 + oldest_count;
-                if let Some(pl) = backlog.remove(&count) {
+                if let Some(pl) = cap.backlog.remove(&count) {
                     buf.write(pl);
                     processed += 1;
                 } else {
