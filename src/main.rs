@@ -53,7 +53,6 @@ fn main() -> anyhow::Result<()> {
 
     // Create the channel to bench the copies
     let (s, r) = with_recycle(RING_BLOCKS, PayloadRecycle::new());
-    let (s2, r2) = with_recycle(RING_BLOCKS, PayloadRecycle::new());
 
     // Preallocate the buffer with non-uninit values
     for _ in 0..RING_BLOCKS {
@@ -71,12 +70,6 @@ fn main() -> anyhow::Result<()> {
             println!("new packet with len {}", r.0.len());
         }
     });
-    std::thread::spawn(move || {
-        core_affinity::set_for_current(CoreId { id: 10 });
-        while let Some(r2) = r2.recv_ref() {
-            println!("new packet with len {}", r2.0.len());
-        }
-    });
 
     // "Warm up" by capturing a ton of packets
     for _ in 0..WARMUP_PACKETS {
@@ -92,7 +85,6 @@ fn main() -> anyhow::Result<()> {
     for _ in 0..BLOCKS_TO_SORT {
         // First block to grab a reference to the next slot in the queue
         let mut slot = s.send_ref().unwrap();
-        let mut slot2 = s2.send_ref().unwrap();
 
         // Create a timer for average block processing
         let mut time = Duration::default();
@@ -154,8 +146,6 @@ fn main() -> anyhow::Result<()> {
                 }
             }
         }
-        // Duplicate this block for the other side
-        slot2.0.clone_from(&slot.0);
 
         // Then reset to_fill
         to_fill = BLOCK_PAYLOADS - 1;
