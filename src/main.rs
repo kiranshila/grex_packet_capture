@@ -22,7 +22,6 @@ fn count(pl: &Payload) -> Count {
     u64::from_be_bytes(pl[0..8].try_into().unwrap())
 }
 
-#[derive(Clone)]
 pub struct PayloadBlock([Payload; BLOCK_PAYLOADS]);
 
 pub struct PayloadRecycle;
