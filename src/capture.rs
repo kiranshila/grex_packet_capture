@@ -32,14 +32,14 @@ impl Capture {
         socket.bind(&address.into())?;
         // Reuse local address without timeout
         socket.reuse_address()?;
-        // Set the buffer size to 256MB
+        // Set the buffer size to 256MB (it will read as double, for some reason)
         let sock_buf_size = 256 * 1024 * 1024;
         socket.set_recv_buffer_size(sock_buf_size)?;
         // Check
         let current_buf_size = socket.recv_buffer_size()?;
-        if current_buf_size != sock_buf_size {
+        if current_buf_size != sock_buf_size * 2 {
             return Err(Error::SetRecvBufferSizeFailed {
-                expected: sock_buf_size,
+                expected: sock_buf_size * 2,
                 found: current_buf_size,
             }
             .into());
