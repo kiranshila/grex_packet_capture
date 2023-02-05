@@ -3,17 +3,16 @@ mod capture;
 use crate::capture::Capture;
 use anyhow::bail;
 use core_affinity::CoreId;
-use std::thread::yield_now;
 use std::time::{Duration, Instant};
 use thingbuf::{mpsc::blocking::with_recycle, Recycle};
 
 const UDP_PAYLOAD: usize = 8200;
 const WARMUP_PACKETS: usize = 1_000_000;
 const BACKLOG_BUFFER_PAYLOADS: usize = 4096;
-const BLOCK_PAYLOAD_POW: u32 = 12;
+const BLOCK_PAYLOAD_POW: u32 = 15;
 const BLOCK_PAYLOADS: usize = 2usize.pow(BLOCK_PAYLOAD_POW);
 const BLOCKS_TO_SORT: usize = 512;
-const RING_BLOCKS: usize = 64;
+const RING_BLOCKS: usize = 8;
 
 type Count = u64;
 
@@ -67,7 +66,7 @@ fn main() -> anyhow::Result<()> {
     // Spawn a thread to "sink" the payloads
     std::thread::spawn(move || {
         while r.recv_ref().is_some() {
-            //println!("new packet");
+            println!("new packet");
         }
     });
 
