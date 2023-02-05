@@ -71,12 +71,12 @@ fn main() -> anyhow::Result<()> {
         while let Some(block) = r.recv_ref() {
             // Copy into thread memory and drop
             current_block.clone_from(&block);
-            let counts: Vec<_> = block.iter().map(count).collect();
-            println!(
-                "Min - {}, Max - {}",
-                counts.iter().min().unwrap(),
-                counts.iter().max().unwrap()
-            )
+            let now = Instant::now();
+            // Do some work, maybe add all the numbers together. This should take on order 35ms (overflowing, but we don't care yet)
+            let sum = current_block
+                .iter()
+                .fold(0u8, |x, y| x + y.iter().sum::<u8>());
+            println!("Sum - {sum}, Duration - {} ms", now.elapsed().as_millis())
         }
     });
 
