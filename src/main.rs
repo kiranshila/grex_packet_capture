@@ -68,7 +68,15 @@ async fn main() -> anyhow::Result<()> {
     let mut to_fill = BLOCK_PAYLOADS - 1;
 
     // Spawn a task to "sink" the payloads
-    tokio::spawn(async move { while r.recv_ref().await.is_some() {} });
+    tokio::spawn(async move {
+        while let Some(block) = r.recv_ref().await {
+            let mut big_sum = 0.0;
+            for payload in block.0 {
+                big_sum += payload.iter().fold(0.0, |x, b| x + *b as f32);
+            }
+            println!("{}", big_sum);
+        }
+    });
 
     // "Warm up" by capturing a ton of packets
     for _ in 0..WARMUP_PACKETS {
