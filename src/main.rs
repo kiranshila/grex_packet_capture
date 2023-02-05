@@ -187,7 +187,8 @@ async fn main() -> anyhow::Result<()> {
                 // Remove this idx from the `to_fill` entry
                 to_fill &= !(1 << idx);
                 // Packet is for this block! Insert into it's position
-                slot.0[idx].write(pl);
+                // Safety: the index is correct by construction as count-oldest_count will always be inbounds
+                unsafe { slot.0.get_unchecked_mut(idx) }.write(pl);
                 processed += 1;
             }
 
