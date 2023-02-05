@@ -42,44 +42,6 @@ impl Default for Payload {
     }
 }
 
-struct ReorderBuffer {
-    backlog_idxs: HashMap<Count, usize>,
-    buffer: Vec<Payload>,
-    free_idxs: VecDeque<usize>,
-}
-
-impl ReorderBuffer {
-    fn new(size: usize) -> Self {
-        Self {
-            backlog_idxs: HashMap::new(),
-            buffer: vec![Payload::default(); size],
-            free_idxs: (0..size).collect(),
-        }
-    }
-    fn insert(&mut self, payload: Payload) -> anyhow::Result<()> {
-        // Grab the next free index
-        let idx = match self.free_idxs.pop_front() {
-            Some(idx) => idx,
-            None => bail!("Reorder buffer filled up, this shouldn't happen"),
-        };
-
-        // Associate its count
-        let count = payload.count();
-        self.backlog_idxs.insert(count, idx);
-        // Memcpy into buffer
-        self.buffer[idx] = payload;
-        Ok(())
-    }
-    fn remove(&mut self, count: &Count) -> Option<Payload> {
-        // Try to find the associated entry
-        let idx = self.backlog_idxs.remove(count)?;
-        // Recycle the index
-        self.free_idxs.push_back(idx);
-        // Return the data
-        Some(self.buffer[idx])
-    }
-}
-
 #[derive(Clone)]
 pub struct PayloadBlock([MaybeUninit<Payload>; BLOCK_PAYLOADS]);
 
@@ -122,7 +84,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Create some state
     let mut buffer = [0u8; UDP_PAYLOAD];
-    let mut rb = ReorderBuffer::new(BACKLOG_BUFFER_PAYLOADS);
+    let mut backlog = HashMap::with_capacity(BACKLOG_BUFFER_PAYLOADS);
     // Sneaky bit manipulation (all bits to 1 to set that the index corresponding with *that bit* needs to be filled)
     let mut to_fill = BLOCK_PAYLOADS - 1;
 
@@ -178,8 +140,7 @@ async fn main() -> anyhow::Result<()> {
                 drops += 1;
             } else if count >= oldest_count + slot.0.len() as u64 {
                 // Packet is destined for the future, insert into reorder buf
-                // If the buffer fills up, panic. This shouldn't happen.
-                rb.insert(pl).unwrap();
+                backlog.insert(count, pl);
             } else {
                 let idx = (count - oldest_count) as usize;
                 // Remove this idx from the `to_fill` entry
@@ -202,7 +163,7 @@ async fn main() -> anyhow::Result<()> {
             if (to_fill >> idx) & 1 == 1 {
                 // Then either fill with data from the past, or set it as default
                 let count = idx as u64 + oldest_count;
-                if let Some(pl) = rb.remove(&count) {
+                if let Some(pl) = backlog.remove(&count) {
                     buf.write(pl);
                     processed += 1;
                 } else {
