@@ -65,16 +65,7 @@ fn main() -> anyhow::Result<()> {
     let mut to_fill = BLOCK_PAYLOADS - 1;
 
     // Spawn a thread to "sink" the payloads
-    std::thread::spawn(move || loop {
-        match r.try_recv_ref() {
-            Ok(_) => (),
-            Err(e) => match e {
-                thingbuf::mpsc::errors::TryRecvError::Empty => yield_now(),
-                thingbuf::mpsc::errors::TryRecvError::Closed => return,
-                _ => unreachable!(),
-            },
-        }
-    });
+    std::thread::spawn(move || while r.recv_ref().is_some() {});
 
     // "Warm up" by capturing a ton of packets
     for _ in 0..WARMUP_PACKETS {
