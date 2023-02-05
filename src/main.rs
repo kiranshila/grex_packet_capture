@@ -173,7 +173,7 @@ fn main() -> anyhow::Result<()> {
             if !core_affinity::set_for_current(CoreId { id: 9 }) {
                 panic!("Couldn't set core affinity");
             }
-            while r.recv().is_some() {}
+            while r.recv_ref().is_some() {}
         })
         .unwrap();
 
