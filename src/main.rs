@@ -12,7 +12,7 @@ use tokio::net::UdpSocket;
 
 const UDP_PAYLOAD: usize = 8200;
 const WARMUP_PACKETS: usize = 1_000_000;
-const BACKLOG_BUFFER_PAYLOADS: usize = 1024;
+const BACKLOG_BUFFER_PAYLOADS: usize = 4096;
 const BLOCK_PAYLOAD_POW: u32 = 15;
 const BLOCK_PAYLOADS: usize = 2usize.pow(BLOCK_PAYLOAD_POW);
 const BLOCKS_TO_SORT: usize = 512;
