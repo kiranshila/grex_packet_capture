@@ -3,7 +3,6 @@ mod capture;
 use crate::capture::Capture;
 use anyhow::bail;
 use core_affinity::CoreId;
-use rayon::prelude::*;
 use std::time::{Duration, Instant};
 use thingbuf::{mpsc::blocking::with_recycle, Recycle};
 
@@ -68,7 +67,7 @@ fn main() -> anyhow::Result<()> {
     std::thread::spawn(move || {
         core_affinity::set_for_current(CoreId { id: 9 });
         while let Some(block) = r.recv() {
-            let counts: Vec<_> = block.par_iter().map(count).collect();
+            let counts: Vec<_> = block.iter().map(count).collect();
             println!(
                 "Min - {}, Max - {}",
                 counts.iter().min().unwrap(),
