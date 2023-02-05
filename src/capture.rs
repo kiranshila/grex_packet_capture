@@ -44,9 +44,7 @@ impl Capture {
             }
             .into());
         }
-        // Set to nonblocking
-        socket.set_nonblocking(true)?;
-        // Replace the socket2 socket with a tokio socket
+        // Replace the socket2 socket with a std socket
         let sock = socket.into();
         Ok(Self {
             sock,
@@ -56,23 +54,7 @@ impl Capture {
     }
 
     pub fn capture(&mut self) -> anyhow::Result<()> {
-        let n = loop {
-            match self.sock.recv(&mut self.buffer) {
-                Ok(n) => break n,
-                Err(e) => {
-                    if let Some(v) = e.raw_os_error() {
-                        if v == 11 {
-                            // EAGAIN
-                            continue;
-                        } else {
-                            return Err(e.into());
-                        }
-                    } else {
-                        return Err(e.into());
-                    }
-                }
-            }
-        };
+        let n = self.sock.recv(&mut self.buffer)?;
         if n != self.buffer.len() {
             Err(Error::SizeMismatch(n).into())
         } else {
