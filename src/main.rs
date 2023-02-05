@@ -24,7 +24,7 @@ fn count(pl: &Payload) -> Count {
     u64::from_be_bytes(pl[0..8].try_into().unwrap())
 }
 
-pub struct PayloadBlock([Payload; BLOCK_PAYLOADS]);
+pub struct PayloadBlock(Box<[Payload; BLOCK_PAYLOADS]>);
 
 pub struct PayloadRecycle;
 
@@ -36,7 +36,7 @@ impl PayloadRecycle {
 
 impl Recycle<PayloadBlock> for PayloadRecycle {
     fn new_element(&self) -> PayloadBlock {
-        PayloadBlock([[0u8; UDP_PAYLOAD]; BLOCK_PAYLOADS])
+        PayloadBlock(Box::new([[0u8; UDP_PAYLOAD]; BLOCK_PAYLOADS]))
     }
 
     fn recycle(&self, _: &mut PayloadBlock) {
@@ -48,8 +48,8 @@ fn main() -> anyhow::Result<()> {
     // Create the runtime
     let rt = Builder::new_multi_thread()
         .enable_io()
-        .thread_stack_size(256 * 1024 * 1024 * 1024)
-        .max_blocking_threads(4)
+        .enable_time()
+        .worker_threads(4)
         .build()?;
 
     // Spawn the root task
@@ -81,7 +81,7 @@ fn main() -> anyhow::Result<()> {
         tokio::spawn(async move {
             while let Some(block) = r.recv_ref().await {
                 let mut big_sum = 0.0;
-                for payload in block.0 {
+                for payload in block.0.iter() {
                     big_sum += payload.iter().fold(0.0, |x, b| x + *b as f32);
                 }
                 println!("{}", big_sum);
