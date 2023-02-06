@@ -15,7 +15,7 @@ use thingbuf::mpsc::with_recycle;
 const RING_BLOCKS: usize = 1024;
 const PAYLOADS_TO_SORT: usize = 32768 * 512;
 
-#[tokio::main(flavor = "current_thread")]
+#[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Bind this thread to a core that shares a NUMA node with the NIC
     if !core_affinity::set_for_current(CoreId { id: 8 }) {
