@@ -78,6 +78,7 @@ impl Capture {
     ) -> anyhow::Result<Duration> {
         // By default, capture into the slot
         self.capture(&mut *slot)?;
+        self.processed += 1;
         // Start the timer
         let now = Instant::now();
         // Then, we get the count
