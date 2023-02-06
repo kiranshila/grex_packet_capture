@@ -47,19 +47,20 @@ async fn main() -> anyhow::Result<()> {
     // Preallocate the buffer with non-uninit values
     for _ in 0..RING_BLOCKS {
         s.send_ref().await?;
-        r.recv_ref();
+        r.recv_ref().await;
     }
     // Spawn a thread to "sink" the payloads
-    tokio::spawn(async move {
+    let cap_sum = tokio::spawn(async move {
         // Create a "static" buffer for this thread so we don't alloc
         let mut current_payload = Box::new([0u8; UDP_PAYLOAD]);
+        let mut global_sum = 0;
         while let Some(payload) = r.recv_ref().await {
             // Copy into thread memory and drop
             current_payload.clone_from(&payload);
-            let now = Instant::now();
             // Do some work, maybe add all the numbers together. This should take on order 35ms (overflowing, but we don't care yet)
-            let sum = current_payload.iter().sum::<u8>();
+            global_sum += current_payload.iter().sum::<u8>();
         }
+        global_sum
     });
 
     // "Warm up" by capturing a ton of packets
@@ -76,6 +77,8 @@ async fn main() -> anyhow::Result<()> {
         // Fill a slot
         total_time += cap.capture_sort(slot).await?;
     }
+
+    println!("Sum of all the bytes- {}", cap_sum.await.unwrap());
 
     println!(
         "Average packet processing time is: {}",
