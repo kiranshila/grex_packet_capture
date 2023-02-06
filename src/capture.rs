@@ -1,14 +1,43 @@
 use socket2::{Domain, Socket, Type};
-use std::time::{Duration, Instant};
 use std::{
     collections::HashMap,
     net::{IpAddr, Ipv4Addr, SocketAddr},
+    sync::atomic::{AtomicBool, Ordering},
 };
-use thingbuf::mpsc::SendRef;
+use thingbuf::mpsc::Sender;
+use thingbuf::Recycle;
 use thiserror::Error;
 use tokio::net::UdpSocket;
 
-use crate::{Count, Payload, BACKLOG_BUFFER_PAYLOADS, UDP_PAYLOAD};
+/// UDP size set by the FPGA gateware
+const UDP_PAYLOAD: usize = 8200;
+const BACKLOG_BUFFER_PAYLOADS: usize = 1024; // It should never exceed this
+
+type Count = u64;
+pub type PayloadBytes = [u8; UDP_PAYLOAD];
+type ChannelPayload = Box<PayloadBytes>;
+
+pub fn boxed_payload() -> ChannelPayload {
+    Box::new([0u8; UDP_PAYLOAD])
+}
+
+pub struct PayloadRecycle;
+
+impl PayloadRecycle {
+    pub const fn new() -> Self {
+        Self
+    }
+}
+
+impl Recycle<ChannelPayload> for PayloadRecycle {
+    fn new_element(&self) -> ChannelPayload {
+        Box::new([0u8; UDP_PAYLOAD])
+    }
+
+    fn recycle(&self, _: &mut ChannelPayload) {
+        // Do nothing, we will write to every position anyway
+    }
+}
 
 #[derive(Error, Debug)]
 /// Errors that can be produced from captures
@@ -21,8 +50,7 @@ pub enum Error {
 
 pub struct Capture {
     sock: UdpSocket,
-    buffer: Payload,
-    pub backlog: HashMap<Count, Payload>,
+    pub backlog: HashMap<Count, PayloadBytes>,
     pub drops: usize,
     pub processed: usize,
     first_payload: bool,
@@ -54,7 +82,6 @@ impl Capture {
         let sock = UdpSocket::from_std(socket.into())?;
         Ok(Self {
             sock,
-            buffer: [0u8; UDP_PAYLOAD],
             backlog: HashMap::with_capacity(BACKLOG_BUFFER_PAYLOADS),
             drops: 0,
             processed: 0,
@@ -63,55 +90,60 @@ impl Capture {
         })
     }
 
-    pub async fn capture(&mut self, buf: &mut Payload) -> anyhow::Result<()> {
+    pub async fn capture(&mut self, buf: &mut PayloadBytes) -> anyhow::Result<()> {
         let n = self.sock.recv(buf).await?;
-        if n != self.buffer.len() {
+        if n != buf.len() {
             Err(Error::SizeMismatch(n).into())
         } else {
             Ok(())
         }
     }
 
-    pub async fn capture_sort(
+    pub async fn start(
         &mut self,
-        mut slot: SendRef<'_, Box<Payload>>,
-    ) -> anyhow::Result<Duration> {
-        // By default, capture into the slot
-        self.capture(&mut *slot).await?;
-        self.processed += 1;
-        // Start the timer
-        let now = Instant::now();
-        // Then, we get the count
-        let this_count = count(&*slot);
-        // Check first payload
-        if self.first_payload {
-            self.first_payload = false;
-            self.next_expected_count = this_count + 1;
-            return Ok(now.elapsed());
-        } else if this_count == self.next_expected_count {
-            self.next_expected_count += 1;
-            return Ok(now.elapsed());
-        } else if this_count < self.next_expected_count {
-            // If the packet is from the past, we drop it
-            self.drops += 1;
-        } else {
-            // This packet is from the future, store it
-            self.backlog.insert(this_count, **slot);
+        payload_sender: Sender<ChannelPayload, PayloadRecycle>,
+        shutdown: &AtomicBool,
+    ) -> anyhow::Result<()> {
+        loop {
+            if shutdown.load(Ordering::Acquire) {
+                break;
+            }
+            // Grab the next slot
+            let mut slot = payload_sender.send_ref().await?;
+            // By default, capture into the slot
+            self.capture(&mut *slot).await?;
+            self.processed += 1;
+            // Then, we get the count
+            let this_count = count(&*slot);
+            // Check first payload
+            if self.first_payload {
+                self.first_payload = false;
+                self.next_expected_count = this_count + 1;
+                continue;
+            } else if this_count == self.next_expected_count {
+                self.next_expected_count += 1;
+                continue;
+            } else if this_count < self.next_expected_count {
+                // If the packet is from the past, we drop it
+                self.drops += 1;
+            } else {
+                // This packet is from the future, store it
+                self.backlog.insert(this_count, **slot);
+            }
+            // If we got this far, this means we need to either replace the value of this slot with one from the backlog, or zeros
+            if let Some(payload) = self.backlog.remove(&self.next_expected_count) {
+                (**slot).clone_from(&payload);
+            } else {
+                // Nothing we can do, write zeros
+                (**slot).clone_from(&[0u8; UDP_PAYLOAD]);
+                (**slot)[0..8].clone_from_slice(&this_count.to_be_bytes());
+                self.drops += 1;
+            }
         }
-        // If we got this far, this means we need to either replace the value of this slot with one from the backlog, or zeros
-        if let Some(payload) = self.backlog.remove(&self.next_expected_count) {
-            (**slot).clone_from(&payload);
-        } else {
-            // Nothing we can do, write zeros
-            (**slot).clone_from(&[0u8; UDP_PAYLOAD]);
-            (**slot)[0..8].clone_from_slice(&this_count.to_be_bytes());
-            self.drops += 1;
-        }
-        println!("Buh");
-        Ok(now.elapsed())
+        Ok(())
     }
 }
 
-fn count(pl: &Payload) -> Count {
+fn count(pl: &PayloadBytes) -> Count {
     u64::from_be_bytes(pl[0..8].try_into().unwrap())
 }
