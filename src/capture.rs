@@ -105,6 +105,7 @@ impl Capture {
             // Nothing we can do, write zeros
             self.drops += 1;
         }
+        println!("Buh");
         Ok(now.elapsed())
     }
 }
