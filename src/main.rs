@@ -4,7 +4,7 @@ use crate::capture::Capture;
 use anyhow::bail;
 use core_affinity::CoreId;
 use std::time::{Duration, Instant};
-use thingbuf::{mpsc::blocking::with_recycle, Recycle};
+use thingbuf::{mpsc::with_recycle, Recycle};
 
 const UDP_PAYLOAD: usize = 8200;
 const WARMUP_PACKETS: usize = 1024; // If the receive buffer is only 256 MB, this should be plenty
@@ -34,7 +34,8 @@ impl Recycle<Box<Payload>> for PayloadRecycle {
     }
 }
 
-fn main() -> anyhow::Result<()> {
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> anyhow::Result<()> {
     // Bind this thread to a core that shares a NUMA node with the NIC
     if !core_affinity::set_for_current(CoreId { id: 8 }) {
         bail!("Couldn't set core affinity");
@@ -45,15 +46,14 @@ fn main() -> anyhow::Result<()> {
     let (s, r) = with_recycle(RING_BLOCKS, PayloadRecycle::new());
     // Preallocate the buffer with non-uninit values
     for _ in 0..RING_BLOCKS {
-        s.send_ref()?;
+        s.send_ref().await?;
         r.recv_ref();
     }
     // Spawn a thread to "sink" the payloads
-    std::thread::spawn(move || {
-        core_affinity::set_for_current(CoreId { id: 9 });
+    tokio::spawn(async move {
         // Create a "static" buffer for this thread so we don't alloc
         let mut current_payload = Box::new([0u8; UDP_PAYLOAD]);
-        while let Some(payload) = r.recv_ref() {
+        while let Some(payload) = r.recv_ref().await {
             // Copy into thread memory and drop
             current_payload.clone_from(&payload);
             let now = Instant::now();
@@ -65,16 +65,16 @@ fn main() -> anyhow::Result<()> {
     // "Warm up" by capturing a ton of packets
     let mut warmup_buf = Box::new([0u8; UDP_PAYLOAD]);
     for _ in 0..WARMUP_PACKETS {
-        cap.capture(&mut warmup_buf)?;
+        cap.capture(&mut warmup_buf).await?;
     }
 
     // Sort N blocks, printing dropped packets
     let mut total_time = Duration::default();
     for _ in 0..PAYLOADS_TO_SORT {
         // First block to grab a reference to the next payload slot in the queue
-        let slot = s.send_ref().unwrap();
+        let slot = s.send_ref().await.unwrap();
         // Fill a slot
-        total_time += cap.capture_sort(slot)?;
+        total_time += cap.capture_sort(slot).await?;
     }
 
     println!(

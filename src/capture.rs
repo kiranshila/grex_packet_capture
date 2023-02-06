@@ -1,12 +1,12 @@
 use socket2::{Domain, Socket, Type};
-use std::net::UdpSocket;
 use std::time::{Duration, Instant};
 use std::{
     collections::HashMap,
     net::{IpAddr, Ipv4Addr, SocketAddr},
 };
-use thingbuf::mpsc::blocking::SendRef;
+use thingbuf::mpsc::SendRef;
 use thiserror::Error;
+use tokio::net::UdpSocket;
 
 use crate::{Count, Payload, BACKLOG_BUFFER_PAYLOADS, UDP_PAYLOAD};
 
@@ -50,8 +50,8 @@ impl Capture {
             }
             .into());
         }
-        // Replace the socket2 socket with a std socket
-        let sock = socket.into();
+        // Replace the socket2 socket with a tokio socket
+        let sock = UdpSocket::from_std(socket.into())?;
         Ok(Self {
             sock,
             buffer: [0u8; UDP_PAYLOAD],
@@ -63,8 +63,8 @@ impl Capture {
         })
     }
 
-    pub fn capture(&mut self, buf: &mut Payload) -> anyhow::Result<()> {
-        let n = self.sock.recv(buf)?;
+    pub async fn capture(&mut self, buf: &mut Payload) -> anyhow::Result<()> {
+        let n = self.sock.recv(buf).await?;
         if n != self.buffer.len() {
             Err(Error::SizeMismatch(n).into())
         } else {
@@ -72,12 +72,12 @@ impl Capture {
         }
     }
 
-    pub fn capture_sort(
+    pub async fn capture_sort(
         &mut self,
         mut slot: SendRef<'_, Box<Payload>>,
     ) -> anyhow::Result<Duration> {
         // By default, capture into the slot
-        self.capture(&mut *slot)?;
+        self.capture(&mut *slot).await?;
         self.processed += 1;
         // Start the timer
         let now = Instant::now();
@@ -103,6 +103,8 @@ impl Capture {
             (**slot).clone_from(&payload);
         } else {
             // Nothing we can do, write zeros
+            (**slot).clone_from(&[0u8; UDP_PAYLOAD]);
+            (**slot)[0..8].clone_from_slice(&this_count.to_be_bytes());
             self.drops += 1;
         }
         println!("Buh");
