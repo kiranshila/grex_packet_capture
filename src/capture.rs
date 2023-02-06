@@ -1,3 +1,5 @@
+use anyhow::bail;
+use core_affinity::CoreId;
 use socket2::{Domain, Socket, Type};
 use std::{
     collections::HashMap,
@@ -104,6 +106,10 @@ impl Capture {
         payload_sender: Sender<ChannelPayload, PayloadRecycle>,
         shutdown: &AtomicBool,
     ) -> anyhow::Result<()> {
+        // Bind this thread to a core that shares a NUMA node with the NIC
+        if !core_affinity::set_for_current(CoreId { id: 8 }) {
+            bail!("Couldn't set core affinity");
+        }
         loop {
             if shutdown.load(Ordering::Acquire) {
                 break;

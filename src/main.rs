@@ -1,8 +1,6 @@
 mod capture;
 
 use crate::capture::{boxed_payload, Capture, PayloadRecycle};
-use anyhow::bail;
-use core_affinity::CoreId;
 use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -11,16 +9,13 @@ use std::{
     time::Duration,
 };
 use thingbuf::mpsc::with_recycle;
+use tokio::task;
 
 const RING_BLOCKS: usize = 1024;
 const PAYLOADS_TO_SORT: usize = 32768 * 512;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Bind this thread to a core that shares a NUMA node with the NIC
-    if !core_affinity::set_for_current(CoreId { id: 8 }) {
-        bail!("Couldn't set core affinity");
-    }
     // Create the channel to bench the copies
     let (s, r) = with_recycle(RING_BLOCKS, PayloadRecycle::new());
     // Create the socket
@@ -54,7 +49,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Sort N blocks, printing dropped packets
     let total_time = Duration::default();
-    cap.start(s, shutdown.as_ref()).await?;
+    task::unconstrained(cap.start(s, shutdown.as_ref())).await?;
 
     println!("Sum of all the bytes- {}", cap_sum.await.unwrap());
     println!(
