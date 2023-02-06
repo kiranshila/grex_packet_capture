@@ -77,7 +77,7 @@ async fn main() -> anyhow::Result<()> {
         // Fill a slot
         total_time += cap.capture_sort(slot).await?;
     }
-
+    drop(s);
     println!("Sum of all the bytes- {}", cap_sum.await.unwrap());
 
     println!(
