@@ -14,7 +14,7 @@ use tokio::task;
 const RING_BLOCKS: usize = 1024;
 const PAYLOADS_TO_SORT: usize = 32768 * 512;
 
-#[tokio::main]
+#[tokio::main(flavor = "multi_thread", worker_threads = 4)]
 async fn main() -> anyhow::Result<()> {
     // Create the channel to bench the copies
     let (s, r) = with_recycle(RING_BLOCKS, PayloadRecycle::new());
