@@ -1,12 +1,14 @@
 use socket2::{Domain, Socket, Type};
 use std::net::UdpSocket;
+use std::time::{Duration, Instant};
 use std::{
     collections::HashMap,
     net::{IpAddr, Ipv4Addr, SocketAddr},
 };
+use thingbuf::mpsc::blocking::SendRef;
 use thiserror::Error;
 
-use crate::{Count, Payload, BACKLOG_BUFFER_PAYLOADS, UDP_PAYLOAD};
+use crate::{Count, Payload, PayloadBlock, BACKLOG_BUFFER_PAYLOADS, UDP_PAYLOAD};
 
 #[derive(Error, Debug)]
 /// Errors that can be produced from captures
@@ -14,13 +16,17 @@ pub enum Error {
     #[error("We recieved a payload which wasn't the size we expected {0}")]
     SizeMismatch(usize),
     #[error("Failed to set the recv buffer size. We tried to set {expected}, but found {found}. Check sysctl net.core.rmem_max")]
-    SetRecvBufferSizeFailed { expected: usize, found: usize },
+    SetRecvBufferFailed { expected: usize, found: usize },
 }
 
 pub struct Capture {
     pub sock: UdpSocket,
     pub buffer: Payload,
     pub backlog: HashMap<Count, Payload>,
+    pub drops: usize,
+    pub processed: usize,
+    first_payload: bool,
+    oldest_count: Count,
 }
 
 impl Capture {
@@ -38,7 +44,7 @@ impl Capture {
         // Check
         let current_buf_size = socket.recv_buffer_size()?;
         if current_buf_size != sock_buf_size * 2 {
-            return Err(Error::SetRecvBufferSizeFailed {
+            return Err(Error::SetRecvBufferFailed {
                 expected: sock_buf_size * 2,
                 found: current_buf_size,
             }
@@ -50,6 +56,10 @@ impl Capture {
             sock,
             buffer: [0u8; UDP_PAYLOAD],
             backlog: HashMap::with_capacity(BACKLOG_BUFFER_PAYLOADS),
+            drops: 0,
+            processed: 0,
+            first_payload: true,
+            oldest_count: 0,
         })
     }
 
@@ -61,4 +71,75 @@ impl Capture {
             Ok(())
         }
     }
+
+    pub fn capture_next_block(
+        &mut self,
+        mut slot: SendRef<'_, PayloadBlock>,
+    ) -> anyhow::Result<(Duration, Duration)> {
+        let n = slot.len();
+        // Sneaky bit manipulation (all bits to 1 to set that the index corresponding with *that bit* needs to be filled)
+        let mut to_fill = n - 1;
+
+        let mut packet_time = Duration::default();
+
+        // Fill every slot
+        for _ in 0..n {
+            // -- CAPTURE
+            // Capture an arbitrary payload
+            self.capture()?;
+            // Time starts now to benchmark processing perf
+            let now = Instant::now();
+            // Decode its count
+            let count = count(&self.buffer);
+            if self.first_payload {
+                self.oldest_count = count;
+                self.first_payload = false;
+            }
+            // -- SORT
+            // Find its position in this block
+            if count < self.oldest_count {
+                // Drop this payload, it happened in the past
+                self.drops += 1;
+            } else if count >= self.oldest_count + n as u64 {
+                // Packet is destined for the future, insert into reorder buf
+                self.backlog.insert(count, self.buffer);
+            } else {
+                let idx = (count - self.oldest_count) as usize;
+                // Remove this idx from the `to_fill` entry
+                to_fill &= !(1 << idx);
+                // Packet is for this block! Insert into it's position
+                slot[idx] = self.buffer;
+                self.processed += 1;
+            }
+            // Stop the timer and add to the block time
+            packet_time += now.elapsed();
+        }
+        // Now we'll fill in gaps with past data, if we have it
+        // Otherwise replace with zeros and increment the drop count
+        let block_process = Instant::now();
+        for (idx, buf) in slot.iter_mut().enumerate() {
+            // Check if this bit needs to be filled
+            if (to_fill >> idx) & 1 == 1 {
+                // Then either fill with data from the past, or set it as default
+                let count = idx as u64 + self.oldest_count;
+                if let Some(pl) = self.backlog.remove(&count) {
+                    buf.clone_from_slice(&pl);
+                    self.processed += 1;
+                } else {
+                    let mut pl = [0u8; UDP_PAYLOAD];
+                    (pl[0..8]).clone_from_slice(&count.to_be_bytes());
+                    buf.clone_from_slice(&pl);
+                    self.drops += 1;
+                }
+            }
+        }
+        // Move the oldest count forward by the block size
+        self.oldest_count += n as u64;
+        let block_time = block_process.elapsed();
+        Ok((packet_time, block_time))
+    }
+}
+
+fn count(pl: &Payload) -> Count {
+    u64::from_be_bytes(pl[0..8].try_into().unwrap())
 }
